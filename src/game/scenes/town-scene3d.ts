@@ -656,7 +656,15 @@ export class TownScene3D {
 
     const path: Array<{ x: number; z: number }> = []
 
-    // Get onto the grid first.
+    // Get onto tarmac first, via the CLOSEST POINT ON A ROAD rather than the
+    // nearest junction. Pickups and dropoffs happen on the pavement, and a
+    // straight line from there to a junction cuts diagonally through the
+    // middle of a building block — which is exactly how the car ends up
+    // wedged between two buildings with the throttle down.
+    const near = roads.nearestRoad(this.#car.x / WORLD_SCALE, this.#car.z / WORLD_SCALE)
+    path.push({ x: near.x * WORLD_SCALE, z: near.y * WORLD_SCALE })
+
+    // Then onto the grid proper.
     path.push({ x: startCol * b, z: startRow * b })
 
     // Travel along X, junction by junction, then along Z. Stopping at every
