@@ -45,6 +45,10 @@ import { Vehicle3D } from '../entities/vehicle3d.js'
 import { type GameSave, sanitizeSave } from '../save.js'
 import { RideSystem3D } from '../systems/ride-system3d.js'
 import { Hud3D } from '../ui/hud3d.js'
+import { Minimap } from '../ui/minimap.js'
+import { Shop } from '../ui/shop.js'
+import { computeEffects, getUpgrade, upgradeCost } from '../../content/upgrades.js'
+import { exportSaveToFile, importSaveFromFile } from '../save.js'
 import { generateCity3D, WORLD_SCALE, type City3D } from '../world/city3d.js'
 
 const TOWN_SEED = 'sunnyville-1'
@@ -53,6 +57,7 @@ const CONFETTI_COLORS = [0xff6b6b, 0xffd166, 0x06d6a0, 0x4cc9f0, 0xf72585]
 const COIN_COLORS = [0xffc93c, 0xffe08a]
 const DUST_COLORS = [0xc9bfa8, 0xb8ad94, 0xd8cfba]
 const SPARKLE_COLORS = [0xffd166, 0xffe9a8, 0xffffff]
+const UPGRADE_IDS = ['speed', 'boost', 'grip', 'fare'] as const
 
 export interface TownDeps {
   renderer: ThreeRenderer
@@ -81,6 +86,8 @@ export class TownScene3D {
   readonly #hud: Hud3D
   readonly #particles: ParticleSystem3D
   readonly #engineSound: EngineSound
+  readonly #minimap: Minimap
+  readonly #shop: Shop
 
   #time = 0
   #exhaustTimer = 0
@@ -107,7 +114,7 @@ export class TownScene3D {
 
     // -- Car -------------------------------------------------------------
     const def = getVehicle(this.#save.activeVehicle)
-    this.#car = new Vehicle3D(this.#city, def)
+    this.#car = new Vehicle3D(this.#city, def, computeEffects(this.#save.upgrades))
 
     const roads = this.#city.roads
     const spawnX = Math.round(roads.cols / 2 - 1) * roads.blockSize * WORLD_SCALE
@@ -155,10 +162,27 @@ export class TownScene3D {
       {
         onMuteToggle: () => this.#toggleMute(),
         onHorn: () => this.#honk(),
+        onShop: () => this.#openShop(),
       },
       this.#save.coins,
     )
     this.#hud.setMuted(this.#save.muted)
+
+    // The map mounts inside the HUD layer so it inherits its safe-area
+    // padding and pointer-events rules.
+    this.#minimap = new Minimap(this.#hud.layer, {
+      bounds: this.#city.bounds,
+      roads: this.#city.roads,
+      worldScale: WORLD_SCALE,
+    })
+
+    this.#shop = new Shop(deps.hudContainer, {
+      onBuy: (id) => this.#buyUpgrade(id),
+      onExport: () => exportSaveToFile(this.#save),
+      onImport: (file) => void this.#importSave(file),
+      onClose: () => this.#closeShop(),
+    })
+    this.#refreshShop()
 
     this.#engineSound = new EngineSound(deps.audio)
 
@@ -235,6 +259,13 @@ export class TownScene3D {
 
     this.#hud.update(dt)
     this.#updateCompass()
+
+    this.#minimap.update(
+      this.#car,
+      this.#rides.hasTarget
+        ? { x: this.#rides.targetX, z: this.#rides.targetZ, color: this.#rides.color }
+        : null,
+    )
   }
 
   render(): void {
@@ -245,6 +276,8 @@ export class TownScene3D {
     this.#engineSound.dispose()
     this.#deps.store.flush()
     this.#hud.dispose()
+    this.#minimap.dispose()
+    this.#shop.dispose()
     this.#rides.dispose()
     this.#particles.dispose()
     disposeCar(this.#carParts)
@@ -396,7 +429,8 @@ export class TownScene3D {
     })
   }
 
-  #handleDropoff(fare: number, x: number, y: number, z: number): void {
+  #handleDropoff(baseFare: number, x: number, y: number, z: number): void {
+    const fare = Math.round(baseFare * this.#car.effects.fare)
     this.#save.coins += fare
     this.#save.totalRides += 1
     this.#deps.store.save(this.#save)
@@ -473,6 +507,76 @@ export class TownScene3D {
     })
   }
 
+  // -- Shop -----------------------------------------------------------------
+
+  #openShop(): void {
+    playClick(this.#deps.audio)
+    this.#refreshShop()
+    this.#shop.setOpen(true)
+  }
+
+  #closeShop(): void {
+    playClick(this.#deps.audio)
+    this.#shop.setOpen(false)
+  }
+
+  #refreshShop(): void {
+    this.#shop.refresh(this.#save.coins, this.#save.upgrades)
+
+    // Nudge the shop button only when something is actually buyable.
+    const canAfford = UPGRADE_IDS.some((id) => {
+      const def = getUpgrade(id)
+      if (!def) return false
+      const cost = upgradeCost(def, this.#save.upgrades[id] ?? 0)
+      return cost !== null && this.#save.coins >= cost
+    })
+    this.#hud.setShopAffordable(canAfford)
+  }
+
+  #buyUpgrade(id: string): boolean {
+    const def = getUpgrade(id)
+    if (!def) return false
+
+    const level = this.#save.upgrades[id] ?? 0
+    const cost = upgradeCost(def, level)
+    if (cost === null || this.#save.coins < cost) return false
+
+    this.#save.coins -= cost
+    this.#save.upgrades[id] = level + 1
+    this.#deps.store.save(this.#save)
+
+    // Recompute from base stats rather than scaling live values, so repeated
+    // purchases cannot compound.
+    this.#car.applyUpgrades(computeEffects(this.#save.upgrades))
+
+    this.#hud.setCoins(this.#save.coins, false)
+    this.#refreshShop()
+    playDropoff(this.#deps.audio)
+    return true
+  }
+
+  async #importSave(file: File): Promise<void> {
+    const result = await importSaveFromFile(file)
+    if (!result.ok) {
+      this.#shop.setStatus(result.reason, 'error')
+      return
+    }
+
+    Object.assign(this.#save, result.save)
+    this.#deps.store.save(this.#save)
+    this.#deps.store.flush()
+
+    // Everything derived from the save has to be rebuilt, not just redrawn.
+    this.#car.applyUpgrades(computeEffects(this.#save.upgrades))
+    this.#hud.setCoins(this.#save.coins, true)
+    this.#hud.setMuted(this.#save.muted)
+    this.#deps.settings.set('muted', this.#save.muted)
+    this.#rides.ridesCompleted = this.#save.totalRides
+    this.#refreshShop()
+
+    this.#shop.setStatus(result.migrated ? 'Loaded (from an older version).' : 'Loaded!')
+  }
+
   #toggleMute(): void {
     const muted = this.#deps.settings.toggleMute()
     this.#save.muted = muted
@@ -490,6 +594,17 @@ export class TownScene3D {
         this.#autoPath = this.#routeTo(x, z)
         this.#autoStuckTime = 0
       },
+      /** Grant coins so the playtest can exercise buying without a long grind. */
+      grantCoins: (amount: number): void => {
+        this.#save.coins += amount
+        this.#deps.store.save(this.#save)
+        this.#hud.setCoins(this.#save.coins, false)
+        this.#refreshShop()
+      },
+      buyUpgrade: (id: string): boolean => this.#buyUpgrade(id),
+      upgrades: (): unknown => ({ ...this.#save.upgrades }),
+      effects: (): unknown => ({ ...this.#car.effects }),
+      maxSpeed: (): number => this.#car.maxSpeed,
       state: (): unknown => ({
         car: {
           x: this.#car.x,

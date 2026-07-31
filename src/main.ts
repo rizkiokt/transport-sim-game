@@ -12,6 +12,7 @@
 
 import './game/ui/hud.css'
 import './game/ui/title.css'
+import './game/ui/shop.css'
 
 import { Color, Scene } from 'three'
 

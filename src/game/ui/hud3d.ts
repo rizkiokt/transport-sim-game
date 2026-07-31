@@ -16,6 +16,7 @@ import { clamp } from '../../engine/math/scalar.js'
 export interface HudCallbacks {
   onMuteToggle(): void
   onHorn(): void
+  onShop(): void
 }
 
 /** Drag distances in CSS px for full steering / brake engagement. */
@@ -32,6 +33,7 @@ export class Hud3D {
   readonly #coinValue: HTMLSpanElement
   readonly #coinPill: HTMLDivElement
   readonly #muteButton: HTMLButtonElement
+  readonly #shopButton!: HTMLButtonElement
   readonly #compass: HTMLDivElement
   readonly #compassArrow: HTMLDivElement
   readonly #stick: HTMLDivElement
@@ -75,6 +77,9 @@ export class Hud3D {
     hornButton.addEventListener('pointerdown', this.#onHornPress)
     this.#muteButton.addEventListener('pointerdown', this.#onMutePress)
 
+    this.#shopButton = this.#root.querySelector('.hud-shop') as HTMLButtonElement
+    this.#shopButton.addEventListener('pointerdown', this.#onShopPress)
+
     // Driving pointers are captured on the 3D surface, not the HUD, so
     // buttons naturally take precedence without any hit-test bookkeeping.
     this.#surface.addEventListener('pointerdown', this.#onSurfaceDown)
@@ -96,6 +101,16 @@ export class Hud3D {
 
   setMuted(muted: boolean): void {
     this.#muteButton.classList.toggle('is-muted', muted)
+  }
+
+  /** Nudge the shop button when something has just become affordable. */
+  setShopAffordable(affordable: boolean): void {
+    this.#shopButton.classList.toggle('is-affordable', affordable)
+  }
+
+  /** The HUD owns the layer everything else (map, shop) mounts into. */
+  get layer(): HTMLElement {
+    return this.#root
   }
 
   /**
@@ -149,6 +164,12 @@ export class Hud3D {
     e.preventDefault()
     e.stopPropagation()
     this.#callbacks.onMuteToggle()
+  }
+
+  readonly #onShopPress = (e: PointerEvent): void => {
+    e.preventDefault()
+    e.stopPropagation()
+    this.#callbacks.onShop()
   }
 
   readonly #onSurfaceDown = (e: PointerEvent): void => {
@@ -222,6 +243,12 @@ const TEMPLATE = `
       <path d="M24.5 9a10 10 0 010 14" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round"/>
     </g>
     <path class="hud-mute-slash" d="M8 24L26 8" stroke="#ff8c42" stroke-width="3.4" stroke-linecap="round"/>
+  </svg>
+</button>
+
+<button class="hud-shop" type="button" aria-label="Upgrades">
+  <svg viewBox="0 0 32 32" aria-hidden="true">
+    <path d="M20.5 4a7.5 7.5 0 00-7 10.2L4 23.7 8.3 28l9.5-9.5A7.5 7.5 0 1020.5 4z" fill="currentColor"/>
   </svg>
 </button>
 

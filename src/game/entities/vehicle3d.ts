@@ -20,6 +20,7 @@
 
 import { clamp, damp, moveTowards, angleDelta } from '../../engine/math/scalar.js'
 import type { VehicleDef } from '../../content/vehicles.js'
+import { NEUTRAL_EFFECTS, type UpgradeEffects } from '../../content/upgrades.js'
 import type { City3D, Obstacle3D } from '../world/city3d.js'
 import { WORLD_SCALE } from '../world/city3d.js'
 import type { RoadPoint } from '../world/road-network.js'
@@ -71,8 +72,11 @@ export class Vehicle3D {
   /** Collision radius in world units. Derived from the car's width. */
   readonly bodyRadius: number
 
-  /** Top speed in world units/second, converted from the content data. */
-  readonly maxSpeed: number
+  /** Top speed in world units/second, after upgrades. */
+  maxSpeed: number
+
+  /** Upgrade multipliers currently applied. */
+  effects: UpgradeEffects = NEUTRAL_EFFECTS
 
   readonly #city: City3D
   readonly #roadScratch: RoadPoint = { x: 0, y: 0, tangent: 0, distance: 0, segmentIndex: -1 }
@@ -82,12 +86,25 @@ export class Vehicle3D {
   /** Wheel radius, for rolling the wheels at the right rate. */
   readonly #wheelRadius: number
 
-  constructor(city: City3D, def: VehicleDef) {
+  constructor(city: City3D, def: VehicleDef, effects: UpgradeEffects = NEUTRAL_EFFECTS) {
     this.#city = city
     this.def = def
-    this.maxSpeed = def.handling.maxSpeed * WORLD_SCALE
     this.bodyRadius = def.art.width * WORLD_SCALE * 0.62
-    this.#wheelRadius = def.art.width * WORLD_SCALE * 0.29
+    this.#wheelRadius = def.art.length * WORLD_SCALE * 0.088
+    this.maxSpeed = def.handling.maxSpeed * WORLD_SCALE
+    this.applyUpgrades(effects)
+  }
+
+  /**
+   * Re-derive handling from the base vehicle and the current upgrade levels.
+   *
+   * Always recomputed from the vehicle's base stats rather than scaling the
+   * live values, so buying an upgrade twice cannot compound into a car that
+   * outruns its own collision detection.
+   */
+  applyUpgrades(effects: UpgradeEffects): void {
+    this.effects = effects
+    this.maxSpeed = this.def.handling.maxSpeed * WORLD_SCALE * effects.speed
   }
 
   place(x: number, z: number, heading: number): void {
@@ -134,7 +151,7 @@ export class Vehicle3D {
     this.onRoad = roadDistance <= halfRoad + 0.5
 
     const surfaceMax = this.onRoad ? this.maxSpeed : this.maxSpeed * GRASS_SPEED_FACTOR
-    const accel = this.maxSpeed / handling.accelTime
+    const accel = (this.maxSpeed / handling.accelTime) * this.effects.boost
     const reverseMax = handling.reverseSpeed * WORLD_SCALE
 
     // -- Longitudinal -------------------------------------------------------
@@ -157,7 +174,7 @@ export class Vehicle3D {
     const authority =
       clamp(speedAbs / (this.maxSpeed * 0.27), 0, 1) * (1 - 0.25 * clamp(this.speedFraction, 0, 1))
     const steerSense = this.speed < 0 ? -1 : 1
-    this.heading += steer * steerSense * handling.steerRate * authority * dt
+    this.heading += steer * steerSense * handling.steerRate * this.effects.grip * authority * dt
 
     // -- Road assist ---------------------------------------------------------
     if (speedAbs > this.maxSpeed * 0.09) {

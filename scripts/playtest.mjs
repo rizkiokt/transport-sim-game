@@ -69,13 +69,27 @@ async function state() {
   return evaluate('globalThis.__ts ? JSON.parse(JSON.stringify(globalThis.__ts.state())) : null')
 }
 
-async function waitFor(label, predicate, timeoutMs = 30000) {
+/**
+ * Wait for a game-state condition.
+ *
+ * Timeouts here are deliberately generous. The ride loop advances in
+ * SIMULATION time, but this harness measures WALL-CLOCK time, and under
+ * SwiftShader the simulation runs at a fraction of real speed — the loop caps
+ * catch-up steps per frame, so a slow renderer directly slows the world. A
+ * gap that takes 3 simulated seconds can take 30 real ones on a loaded CI
+ * runner. Short timeouts here fail as "the game is broken" when the game is
+ * merely being rendered slowly, which is the least useful possible signal.
+ */
+async function waitFor(label, predicate, timeoutMs = 60000) {
   const start = Date.now()
   for (;;) {
     const s = await state()
     if (s && predicate(s)) return s
     if (Date.now() - start > timeoutMs) {
-      throw new Error(`TIMEOUT waiting for: ${label}\nlast state: ${JSON.stringify(s)}`)
+      throw new Error(
+        `TIMEOUT waiting for: ${label}\nlast state: ${JSON.stringify(s)}` +
+          (errors.length ? `\ncaptured exceptions:\n  ${errors.join('\n  ')}` : '\n(no exceptions captured)'),
+      )
     }
     await sleep(250)
   }
@@ -105,7 +119,8 @@ async function driveTo(label, x, z, predicate, timeoutMs = 60000) {
     if (Date.now() - start > timeoutMs) {
       const s = await state()
       throw new Error(
-        `TIMEOUT waiting for: ${label} after ${attempt + 1} approach(es)\nlast state: ${JSON.stringify(s)}`,
+        `TIMEOUT waiting for: ${label} after ${attempt + 1} approach(es)\nlast state: ${JSON.stringify(s)}` +
+          (errors.length ? `\ncaptured exceptions:\n  ${errors.join('\n  ')}` : '\n(no exceptions captured)'),
       )
     }
   }
@@ -182,7 +197,7 @@ try {
 
   // -- Start ----------------------------------------------------------------
   await evaluate('document.querySelector(".title-play").click(); true')
-  await waitFor('town scene to exist', () => true, 8000)
+  await waitFor('town scene to exist', () => true, 20000)
   pass('pressing play starts the town')
 
   const hudUp = await evaluate('!!document.querySelector(".hud")')
@@ -190,7 +205,7 @@ try {
   pass('HUD is present')
 
   // -- Passenger -------------------------------------------------------------
-  const waiting = await waitFor('a waiting passenger', (s) => s.ride.phase === 'waiting', 15000)
+  const waiting = await waitFor('a waiting passenger', (s) => s.ride.phase === 'waiting', 60000)
   pass(`passenger waiting at ${waiting.ride.passengerX.toFixed(1)}, ${waiting.ride.passengerZ.toFixed(1)}`)
 
   const coinsBefore = waiting.coins
@@ -209,7 +224,7 @@ try {
   const riding = await waitFor(
     'destination assigned',
     (s) => s.ride.phase === 'riding' && s.ride.hasTarget,
-    12000,
+    45000,
   )
   pass(`destination at ${riding.ride.targetX.toFixed(1)}, ${riding.ride.targetZ.toFixed(1)}`)
 
@@ -246,7 +261,7 @@ try {
   pass(`HUD shows ${shown}`)
 
   // -- The loop repeats ---------------------------------------------------------
-  const second = await waitFor('a second passenger', (s) => s.ride.phase === 'waiting', 15000)
+  const second = await waitFor('a second passenger', (s) => s.ride.phase === 'waiting', 90000)
   pass('a new passenger appeared')
   await driveTo(
     'second pickup',
@@ -256,6 +271,56 @@ try {
     90000,
   )
   pass('second pickup works — the loop repeats')
+
+  // -- Upgrades ------------------------------------------------------------------
+  // The shop is where earned coins become something a child can feel, so the
+  // whole path is checked: price shown, purchase applied, car actually faster,
+  // and the change persisted.
+  const shopOpen = await evaluate(`(() => {
+    document.querySelector('.hud-shop').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    return !document.querySelector('.shop').classList.contains('is-hidden')
+  })()`)
+  if (!shopOpen) throw new Error('shop did not open')
+  pass('upgrade shop opens')
+
+  const speedBefore = await evaluate('globalThis.__ts.maxSpeed()')
+  await evaluate('globalThis.__ts.grantCoins(500); true')
+  await sleep(300)
+
+  const anyAffordable = await evaluate(
+    '[...document.querySelectorAll(".shop-buy")].some((b) => !b.disabled)',
+  )
+  if (!anyAffordable) throw new Error('nothing affordable with 500 coins')
+  pass('upgrades become buyable once affordable')
+
+  const bought = await evaluate('globalThis.__ts.buyUpgrade("speed")')
+  if (!bought) throw new Error('buying the speed upgrade failed')
+
+  const speedAfter = await evaluate('globalThis.__ts.maxSpeed()')
+  if (!(speedAfter > speedBefore)) {
+    throw new Error(`speed upgrade did not apply: ${speedBefore} -> ${speedAfter}`)
+  }
+  pass(`speed upgrade applied (${speedBefore.toFixed(2)} -> ${speedAfter.toFixed(2)} u/s)`)
+
+  await sleep(1200)
+  const persistedUpgrades = await evaluate(`(() => {
+    const raw = localStorage.getItem('transport-sim.save')
+    return raw ? JSON.parse(raw).data.upgrades : null
+  })()`)
+  if (!persistedUpgrades || persistedUpgrades.speed !== 1) {
+    throw new Error(`upgrade not persisted: ${JSON.stringify(persistedUpgrades)}`)
+  }
+  pass('upgrade persisted to storage')
+
+  // Buying must be idempotent against affordability, never negative coins.
+  await evaluate('globalThis.__ts.buyUpgrade("speed"); globalThis.__ts.buyUpgrade("speed"); true')
+  const coinsNow = await evaluate('globalThis.__ts.state().coins')
+  if (coinsNow < 0) throw new Error(`coins went negative: ${coinsNow}`)
+  pass('coins never go negative')
+
+  const mapPresent = await evaluate('!!document.querySelector(".minimap canvas")')
+  if (!mapPresent) throw new Error('minimap missing')
+  pass('city map is present')
 
   // -- Health --------------------------------------------------------------------
   const stats = await evaluate(`JSON.parse(JSON.stringify({
