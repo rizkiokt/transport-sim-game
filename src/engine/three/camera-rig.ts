@@ -151,6 +151,14 @@ export class ChaseCamera {
     return this.#yaw
   }
 
+  /**
+   * Change how far back the camera sits. Vehicles differ enormously in size —
+   * a bus at a taxi's follow distance fills the whole screen.
+   */
+  setDistance(distance: number): void {
+    this.#opts.distance = distance
+  }
+
   #apply(dt: number): void {
     this.#updateShake(dt)
 

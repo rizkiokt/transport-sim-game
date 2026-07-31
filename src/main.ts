@@ -23,10 +23,18 @@ import { InputManager, type PointerSurface } from './engine/input/input.js'
 import { ensureFontsReady } from './engine/render/fonts.js'
 import { guessTier, ThreeRenderer } from './engine/three/renderer.js'
 import { ACTION_BINDINGS } from './game/config/actions.js'
-import { BRANDING } from './game/config/branding.js'
-import { playStart } from './game/audio/sfx.js'
-import { createSaveStore, sanitizeSave } from './game/save.js'
+import { playClick, playStart } from './game/audio/sfx.js'
+import {
+  createDefaultSave,
+  createSaveStore,
+  exportSaveToFile,
+  importSaveFromFile,
+  sanitizeSave,
+} from './game/save.js'
 import { TownScene3D } from './game/scenes/town-scene3d.js'
+import { TitleScreen } from './game/ui/title-screen.js'
+import { Garage } from './game/ui/garage.js'
+import { getVehicle } from './content/vehicles.js'
 
 /** Shown for the frames before the town exists, so the start is sky not black. */
 function createSkyScene(): Scene {
@@ -76,11 +84,96 @@ async function main(): Promise<void> {
   const skyScene = createSkyScene()
 
   // -- Title ----------------------------------------------------------------
-  const title = createTitle(app, BRANDING.title)
-  hideBootSplash()
-
   let town: TownScene3D | null = null
   let started = false
+
+  const titleState = (): Parameters<TitleScreen['refresh']>[0] => ({
+    muted: settings.settings.muted,
+    reducedMotion: settings.settings.reducedMotion,
+    quality: settings.settings.qualityPreference,
+    coins: save.coins,
+    ownedCount: save.ownedVehicles.length,
+  })
+
+  const title = new TitleScreen(app, {
+    onPlay: () => start(),
+    onGarage: () => {
+      // Before the town exists there is no car to swap, so the title screen
+      // gets its own garage that edits the save directly. The town reads that
+      // save when it starts, so a choice made here is the car you drive.
+      playClick(audio)
+      titleGarage.refresh({ coins: save.coins, owned: save.ownedVehicles, active: save.activeVehicle })
+      titleGarage.setOpen(true)
+    },
+    onMuteToggle: () => {
+      const muted = settings.toggleMute()
+      save.muted = muted
+      audio.setMuted(muted)
+      store.save(save)
+      title.refresh(titleState())
+    },
+    onQualityChange: (tier) => {
+      settings.set('qualityPreference', tier)
+      if (tier !== 'auto') renderer.setTier(tier)
+      title.refresh(titleState())
+      playClick(audio)
+    },
+    onReducedMotionToggle: () => {
+      settings.set('reducedMotion', !settings.settings.reducedMotion)
+      title.refresh(titleState())
+      playClick(audio)
+    },
+    onExport: () => exportSaveToFile(save),
+    onImport: (file) => {
+      void importSaveFromFile(file).then((result) => {
+        if (!result.ok) {
+          title.setStatus(result.reason, 'error')
+          return
+        }
+        Object.assign(save, result.save)
+        store.save(save)
+        store.flush()
+        settings.set('muted', save.muted)
+        audio.setMuted(save.muted)
+        title.refresh(titleState())
+        title.setStatus(result.migrated ? 'Loaded (from an older version).' : 'Loaded!')
+      })
+    },
+    onResetProgress: () => {
+      Object.assign(save, createDefaultSave())
+      store.save(save)
+      store.flush()
+      title.refresh(titleState())
+      title.setStatus('Started over.')
+    },
+  })
+
+  const titleGarage = new Garage(app, {
+    onBuy: (id) => {
+      const def = getVehicle(id)
+      if (save.ownedVehicles.includes(def.id) || save.coins < def.price) return false
+      save.coins -= def.price
+      save.ownedVehicles.push(def.id)
+      save.activeVehicle = def.id
+      store.save(save)
+      titleGarage.refresh({ coins: save.coins, owned: save.ownedVehicles, active: save.activeVehicle })
+      title.refresh(titleState())
+      return true
+    },
+    onSelect: (id) => {
+      save.activeVehicle = id
+      store.save(save)
+      titleGarage.refresh({ coins: save.coins, owned: save.ownedVehicles, active: save.activeVehicle })
+      playClick(audio)
+    },
+    onClose: () => {
+      titleGarage.setOpen(false)
+      playClick(audio)
+    },
+  })
+
+  title.refresh(titleState())
+  hideBootSplash()
 
   const start = (): void => {
     if (started) return
@@ -89,9 +182,9 @@ async function main(): Promise<void> {
     void audio.resume()
     playStart(audio)
 
-    title.element.classList.add('is-leaving')
-    setTimeout(() => title.element.remove(), 420)
-    window.removeEventListener('keydown', start)
+    title.dismiss()
+    titleGarage.dispose()
+    window.removeEventListener('keydown', onKeyStart)
 
     town = new TownScene3D({
       renderer,
@@ -105,9 +198,13 @@ async function main(): Promise<void> {
     })
   }
 
-  title.playButton.addEventListener('click', start)
-  // Any key also starts, so a keyboard player never has to reach for a mouse.
-  window.addEventListener('keydown', start)
+  // Any key starts, so a keyboard player never has to reach for a mouse —
+  // except while a dialog is open, where a keypress means something else.
+  const onKeyStart = (): void => {
+    if (titleGarage.isOpen) return
+    start()
+  }
+  window.addEventListener('keydown', onKeyStart)
 
   // -- Loop -------------------------------------------------------------------
   const loop = new GameLoop(
@@ -153,32 +250,6 @@ async function main(): Promise<void> {
       },
     }
   }
-}
-
-interface TitleHandle {
-  element: HTMLDivElement
-  playButton: HTMLButtonElement
-}
-
-function createTitle(container: HTMLElement, name: string): TitleHandle {
-  const element = document.createElement('div')
-  element.className = 'title'
-
-  const heading = document.createElement('h1')
-  heading.className = 'title-name'
-  // textContent, not innerHTML: the title is data, and this can never inject.
-  heading.textContent = name
-
-  const button = document.createElement('button')
-  button.className = 'title-play'
-  button.type = 'button'
-  button.setAttribute('aria-label', 'Play')
-  button.innerHTML = `<svg viewBox="0 0 64 64" aria-hidden="true"><path d="M25 16l26 16-26 16z" fill="currentColor"/></svg>`
-
-  element.append(heading, button)
-  container.appendChild(element)
-
-  return { element, playButton: button }
 }
 
 function hideBootSplash(): void {

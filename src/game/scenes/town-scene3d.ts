@@ -47,6 +47,7 @@ import { RideSystem3D } from '../systems/ride-system3d.js'
 import { Hud3D } from '../ui/hud3d.js'
 import { Minimap } from '../ui/minimap.js'
 import { Shop } from '../ui/shop.js'
+import { Garage } from '../ui/garage.js'
 import { computeEffects, getUpgrade, upgradeCost } from '../../content/upgrades.js'
 import { exportSaveToFile, importSaveFromFile } from '../save.js'
 import { generateCity3D, WORLD_SCALE, type City3D } from '../world/city3d.js'
@@ -79,8 +80,8 @@ export class TownScene3D {
   readonly #city: City3D
   readonly #environment: Environment
   readonly #chase: ChaseCamera
-  readonly #car: Vehicle3D
-  readonly #carParts: CarParts
+  #car: Vehicle3D
+  #carParts: CarParts
   readonly #carMaterials: CarSharedMaterials
   readonly #rides: RideSystem3D
   readonly #hud: Hud3D
@@ -88,6 +89,7 @@ export class TownScene3D {
   readonly #engineSound: EngineSound
   readonly #minimap: Minimap
   readonly #shop: Shop
+  readonly #garage: Garage
 
   #time = 0
   #exhaustTimer = 0
@@ -122,7 +124,7 @@ export class TownScene3D {
     this.#car.place(spawnX, spawnZ, 0)
 
     this.#carMaterials = createCarMaterials()
-    this.#carParts = createCar({ art: def.art, paint: 0xffc93c }, this.#carMaterials)
+    this.#carParts = createCar({ art: def.art, paint: def.paint }, this.#carMaterials)
     this.scene.add(this.#carParts.root)
 
     // -- Camera -----------------------------------------------------------
@@ -163,6 +165,7 @@ export class TownScene3D {
         onMuteToggle: () => this.#toggleMute(),
         onHorn: () => this.#honk(),
         onShop: () => this.#openShop(),
+        onGarage: () => this.openGarage(),
       },
       this.#save.coins,
     )
@@ -182,7 +185,20 @@ export class TownScene3D {
       onImport: (file) => void this.#importSave(file),
       onClose: () => this.#closeShop(),
     })
+    this.#garage = new Garage(deps.hudContainer, {
+      onBuy: (id) => this.buyVehicle(id),
+      onSelect: (id) => {
+        this.setVehicle(id)
+        this.#refreshGarage()
+        playClick(this.#deps.audio)
+      },
+      onClose: () => {
+        this.#garage.setOpen(false)
+        playClick(this.#deps.audio)
+      },
+    })
     this.#refreshShop()
+    this.#refreshGarage()
 
     this.#engineSound = new EngineSound(deps.audio)
 
@@ -290,6 +306,7 @@ export class TownScene3D {
     this.#hud.dispose()
     this.#minimap.dispose()
     this.#shop.dispose()
+    this.#garage.dispose()
     this.#rides.dispose()
     this.#particles.dispose()
     disposeCar(this.#carParts)
@@ -519,6 +536,65 @@ export class TownScene3D {
     })
   }
 
+  // -- Fleet ------------------------------------------------------------------
+
+  /**
+   * Swap the active vehicle, rebuilding its model in place.
+   *
+   * The car keeps its position, heading and speed, so changing vehicle in the
+   * garage does not teleport the player or interrupt a ride. Physics is
+   * rebuilt from the new definition because handling, size and collision
+   * radius all differ — a monster truck cannot inherit a taxi's footprint.
+   */
+  setVehicle(id: string): void {
+    const def = getVehicle(id)
+    if (def.id === this.#car.def.id) return
+
+    const { x, z, heading, speed } = this.#car
+
+    // Old model first: WebGL buffers are not garbage collected with the JS
+    // object, so swapping without disposing leaks a car per change.
+    this.scene.remove(this.#carParts.root)
+    disposeCar(this.#carParts)
+
+    this.#car = new Vehicle3D(this.#city, def, computeEffects(this.#save.upgrades))
+    this.#car.place(x, z, heading)
+    this.#car.speed = speed
+
+    this.#carParts = createCar({ art: def.art, paint: def.paint }, this.#carMaterials)
+    this.scene.add(this.#carParts.root)
+
+    // Bigger vehicles need the camera further back or they fill the screen.
+    this.#chase.setDistance(6.2 + def.art.length * ART_TO_WORLD * 0.5)
+
+    // Place the new model immediately rather than waiting for the next
+    // update. Without this the car sits at the world origin until the next
+    // frame — a visible pop in normal play, and nothing at all if the swap
+    // happens while the loop is paused.
+    this.#syncCarTransform()
+
+    this.#save.activeVehicle = def.id
+    this.#deps.store.save(this.#save)
+  }
+
+  /** Buy a vehicle. Returns true when the purchase went through. */
+  buyVehicle(id: string): boolean {
+    const def = getVehicle(id)
+    if (this.#save.ownedVehicles.includes(def.id)) return false
+    if (this.#save.coins < def.price) return false
+
+    this.#save.coins -= def.price
+    this.#save.ownedVehicles.push(def.id)
+    this.#deps.store.save(this.#save)
+
+    this.#hud.setCoins(this.#save.coins, true)
+    this.setVehicle(def.id)
+    this.#refreshShop()
+    this.#refreshGarage()
+    playDropoff(this.#deps.audio)
+    return true
+  }
+
   // -- Shop -----------------------------------------------------------------
 
   #openShop(): void {
@@ -530,6 +606,21 @@ export class TownScene3D {
   #closeShop(): void {
     playClick(this.#deps.audio)
     this.#shop.setOpen(false)
+  }
+
+  /** Open the garage from anywhere (HUD button or title screen). */
+  openGarage(): void {
+    this.#refreshGarage()
+    this.#garage.setOpen(true)
+    playClick(this.#deps.audio)
+  }
+
+  #refreshGarage(): void {
+    this.#garage.refresh({
+      coins: this.#save.coins,
+      owned: this.#save.ownedVehicles,
+      active: this.#car.def.id,
+    })
   }
 
   #refreshShop(): void {
@@ -563,6 +654,7 @@ export class TownScene3D {
 
     this.#hud.setCoins(this.#save.coins, false)
     this.#refreshShop()
+    this.#refreshGarage()
     playDropoff(this.#deps.audio)
     return true
   }
@@ -614,6 +706,11 @@ export class TownScene3D {
         this.#refreshShop()
       },
       buyUpgrade: (id: string): boolean => this.#buyUpgrade(id),
+      previewVehicle: (id: string): void => this.setVehicle(id),
+      buyVehicle: (id: string): boolean => this.buyVehicle(id),
+      owned: (): unknown => [...this.#save.ownedVehicles],
+      openGarage: (): void => this.openGarage(),
+      activeVehicle: (): string => this.#car.def.id,
       /**
        * Lift the car back onto the nearest road.
        *

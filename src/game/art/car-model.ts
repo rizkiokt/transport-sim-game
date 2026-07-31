@@ -23,6 +23,7 @@ import {
 } from 'three'
 
 import {
+  cabinGeometry,
   discGeometry,
   plateGeometry,
   roundedBoxGeometry,
@@ -136,19 +137,18 @@ export function createCar(options: CarModelOptions, shared: CarSharedMaterials):
   const disposables: Array<BufferGeometry | Material> = []
 
   // -- Proportions ---------------------------------------------------------
-  // The art data came from the top-down game, where "width" was the whole
-  // footprint. Taken literally it produces a car as wide as it is tall with
-  // wheels the size of tractor tyres, so the 3D body is narrowed and the
-  // wheels are sized against LENGTH — a real car's wheel is roughly a twelfth
-  // of its length, whatever its width.
+  // Wheels are sized against LENGTH, not width: a real wheel is roughly a
+  // twelfth of a car's length whatever its width, and sizing off width gives
+  // every wide vehicle tractor tyres.
   const length = art.length * ART_TO_WORLD
   const bodyWidth = art.width * ART_TO_WORLD * 0.84
+  const slope = art.cabinSlope ?? 0.45
 
-  const wheelRadius = length * 0.088
-  const wheelWidth = bodyWidth * 0.14
+  const wheelRadius = length * 0.088 * (art.wheelScale ?? 1)
+  const wheelWidth = bodyWidth * 0.14 * (art.offRoad ? 1.7 : 1)
 
-  const clearance = wheelRadius * 0.52
-  const lowerHeight = bodyWidth * 0.40
+  const clearance = wheelRadius * 0.52 * (art.clearanceScale ?? 1)
+  const lowerHeight = bodyWidth * 0.46 * (art.bodyHeightScale ?? 1)
   const lowerY = clearance + lowerHeight / 2
 
   const root = new Group()
@@ -157,16 +157,13 @@ export function createCar(options: CarModelOptions, shared: CarSharedMaterials):
 
   const paintMaterial = new MeshStandardMaterial({
     color: paint,
-    roughness: 0.32,
-    metalness: 0.35,
-    envMapIntensity: 1.15,
+    roughness: 0.3,
+    metalness: 0.38,
+    envMapIntensity: 1.2,
   })
   disposables.push(paintMaterial)
 
-  // -- Lower body ----------------------------------------------------------
-  // A modest radius. Taking a third of the body height (the obvious choice)
-  // rounds the top and bottom edges until they meet and the car reads as a
-  // loaf of bread rather than a vehicle.
+  // -- Lower body ------------------------------------------------------------
   const lowerGeo = roundedBoxGeometry(length, lowerHeight, bodyWidth, lowerHeight * 0.24)
   disposables.push(lowerGeo)
   const lower = new Mesh(lowerGeo, paintMaterial)
@@ -175,46 +172,94 @@ export function createCar(options: CarModelOptions, shared: CarSharedMaterials):
   lower.receiveShadow = true
   body.add(lower)
 
-  // -- Cabin ---------------------------------------------------------------
-  // Longer cabins are what make a bus read as a bus.
-  const cabinLength = length * (0.3 + art.sideWindows * 0.1)
-  const cabinHeight = lowerHeight * 0.66
-  const cabinWidth = bodyWidth * 0.93
-  const cabinY = lowerY + lowerHeight / 2 + cabinHeight / 2 - lowerHeight * 0.14
-  const cabinX = -length * 0.05
+  // A darker sill below the doors. Real cars are never one flat colour from
+  // roof to road, and this single band does most of that work.
+  const sillGeo = roundedBoxGeometry(length * 0.96, lowerHeight * 0.2, bodyWidth * 1.01, 0.02)
+  disposables.push(sillGeo)
+  const sill = new Mesh(sillGeo, shared.trim)
+  sill.position.y = clearance + lowerHeight * 0.1
+  body.add(sill)
 
-  const cabinGeo = roundedBoxGeometry(cabinLength, cabinHeight, cabinWidth, cabinHeight * 0.26)
+  // -- Cabin -----------------------------------------------------------------
+  const cabinLength = length * (0.3 + art.sideWindows * 0.1)
+  const cabinHeight = lowerHeight * (art.pickupBed ? 0.62 : 0.68)
+  const cabinWidth = bodyWidth * 0.93
+  // A pickup's cab sits forward, leaving room for the bed behind it.
+  const cabinX = art.pickupBed ? length * 0.1 : -length * 0.05
+  const cabinY = lowerY + lowerHeight / 2 + cabinHeight / 2 - lowerHeight * 0.14
+
+  const cabinGeo = cabinGeometry(cabinLength, cabinHeight, cabinWidth, slope, cabinHeight * 0.22)
   disposables.push(cabinGeo)
   const cabin = new Mesh(cabinGeo, paintMaterial)
   cabin.position.set(cabinX, cabinY, 0)
   cabin.castShadow = true
   body.add(cabin)
 
-  // Glass: a slightly wider, shorter box so it reads as a continuous band of
-  // windows wrapping the cabin rather than as separate panes.
-  const glassGeo = roundedBoxGeometry(
-    cabinLength * 0.92,
-    cabinHeight * 0.5,
-    cabinWidth * 1.03,
+  // Glass follows the same rake, slightly inset, so the pillars read as solid
+  // body colour and the glass as a separate band.
+  const glassGeo = cabinGeometry(
+    cabinLength * 0.94,
+    cabinHeight * 0.54,
+    cabinWidth * 1.02,
+    slope,
     cabinHeight * 0.14,
   )
   disposables.push(glassGeo)
   const glass = new Mesh(glassGeo, shared.glass)
-  glass.position.set(cabinX, cabinY + cabinHeight * 0.08, 0)
+  glass.position.set(cabinX, cabinY + cabinHeight * 0.1, 0)
   body.add(glass)
 
-  // -- Wheels --------------------------------------------------------------
+  // -- Door lines --------------------------------------------------------------
+  // A thin dark inset per door. Nothing says "moulded plastic toy" louder than
+  // a car with no panel gaps at all.
+  const doorGeo = roundedBoxGeometry(length * 0.008, lowerHeight * 0.62, bodyWidth * 1.02, 0.008)
+  disposables.push(doorGeo)
+  const doorCount = Math.max(1, art.sideWindows)
+  for (let i = 0; i <= doorCount; i++) {
+    const t = i / doorCount
+    const x = cabinX - cabinLength / 2 + cabinLength * t
+    const line = new Mesh(doorGeo, shared.trim)
+    line.position.set(x, lowerY + lowerHeight * 0.05, 0)
+    body.add(line)
+  }
+
+  // Door handles.
+  const handleGeo = roundedBoxGeometry(length * 0.035, lowerHeight * 0.06, bodyWidth * 1.02, 0.01)
+  disposables.push(handleGeo)
+  for (let i = 0; i < doorCount; i++) {
+    const t = (i + 0.62) / doorCount
+    const x = cabinX - cabinLength / 2 + cabinLength * t
+    const handle = new Mesh(handleGeo, shared.chrome)
+    handle.position.set(x, lowerY + lowerHeight * 0.22, 0)
+    body.add(handle)
+  }
+
+  // -- Cargo bed ---------------------------------------------------------------
+  if (art.pickupBed) {
+    const bedGeo = roundedBoxGeometry(
+      length * 0.42,
+      lowerHeight * 0.36,
+      bodyWidth * 0.98,
+      lowerHeight * 0.08,
+    )
+    disposables.push(bedGeo)
+    const bed = new Mesh(bedGeo, shared.trim)
+    bed.position.set(-length * 0.26, lowerY + lowerHeight * 0.5, 0)
+    bed.castShadow = true
+    body.add(bed)
+  }
+
+  // -- Wheels --------------------------------------------------------------------
   const wheelGeo = wheelGeometry(wheelRadius, wheelWidth)
-  // A flat hub disc, not a sphere: a sphere bulges out of the tyre and reads
-  // as an eyeball rather than a wheel.
-  const hubGeo = discGeometry(wheelRadius * 0.54, wheelWidth * 1.06, 12)
-  disposables.push(wheelGeo, hubGeo)
+  const hubGeo = discGeometry(wheelRadius * 0.5, wheelWidth * 1.08, 12)
+  // Spokes turn a flat hub into something that reads as a wheel when it spins.
+  const spokeGeo = roundedBoxGeometry(wheelRadius * 0.78, wheelRadius * 0.12, wheelWidth * 1.1, 0.01)
+  disposables.push(wheelGeo, hubGeo, spokeGeo)
 
   const wheels: Mesh[] = []
   const steeredWheels: Object3D[] = []
   const axleX = length * 0.31
-  // Tuck the wheels just inside the bodywork.
-  const axleZ = bodyWidth / 2 - wheelWidth * 0.42
+  const axleZ = bodyWidth / 2 - wheelWidth * (art.offRoad ? 0.05 : 0.42)
 
   for (const [ax, az, steered] of [
     [axleX, -axleZ, true],
@@ -222,8 +267,6 @@ export function createCar(options: CarModelOptions, shared: CarSharedMaterials):
     [-axleX, -axleZ, false],
     [-axleX, axleZ, false],
   ] as const) {
-    // A pivot lets the front wheels yaw for steering without fighting the
-    // rolling rotation applied to the wheel mesh itself.
     const pivot = new Group()
     pivot.position.set(ax, wheelRadius, az)
     body.add(pivot)
@@ -232,27 +275,44 @@ export function createCar(options: CarModelOptions, shared: CarSharedMaterials):
     wheel.castShadow = true
     pivot.add(wheel)
 
-    // The hub is a child of the wheel so it spins with it.
     const hub = new Mesh(hubGeo, shared.rim)
     wheel.add(hub)
+
+    for (let i = 0; i < 3; i++) {
+      const spoke = new Mesh(spokeGeo, shared.rim)
+      spoke.rotation.z = (i / 3) * Math.PI
+      wheel.add(spoke)
+    }
 
     wheels.push(wheel)
     if (steered) steeredWheels.push(pivot)
   }
 
-  // -- Lights ---------------------------------------------------------------
+  // Exposed axles, which is most of what makes a lifted truck look lifted.
+  if (art.offRoad) {
+    const axleGeo = discGeometry(wheelRadius * 0.12, bodyWidth * 1.5, 8)
+    disposables.push(axleGeo)
+    for (const ax of [axleX, -axleX]) {
+      const axle = new Mesh(axleGeo, shared.trim)
+      axle.rotation.y = Math.PI / 2
+      axle.position.set(ax, wheelRadius, 0)
+      body.add(axle)
+    }
+  }
+
+  // -- Lights -----------------------------------------------------------------------
   const lightGeo = roundedBoxGeometry(
     length * 0.028,
-    lowerHeight * 0.24,
+    lowerHeight * 0.2,
     bodyWidth * 0.19,
-    lowerHeight * 0.08,
+    lowerHeight * 0.07,
   )
   disposables.push(lightGeo)
 
   const headlights: Mesh[] = []
   for (const z of [-bodyWidth * 0.29, bodyWidth * 0.29]) {
     const light = new Mesh(lightGeo, shared.light)
-    light.position.set(length * 0.487, lowerY + lowerHeight * 0.12, z)
+    light.position.set(length * 0.487, lowerY + lowerHeight * 0.14, z)
     body.add(light)
     headlights.push(light)
   }
@@ -260,44 +320,48 @@ export function createCar(options: CarModelOptions, shared: CarSharedMaterials):
   const brakeLights: Mesh[] = []
   for (const z of [-bodyWidth * 0.29, bodyWidth * 0.29]) {
     const light = new Mesh(lightGeo, shared.brake)
-    light.position.set(-length * 0.487, lowerY + lowerHeight * 0.12, z)
+    light.position.set(-length * 0.487, lowerY + lowerHeight * 0.14, z)
     body.add(light)
     brakeLights.push(light)
   }
 
-  // -- Bumpers, grille, plates ---------------------------------------------
-  // Thin bars rather than blocks: these are trim, and anything chunky here
-  // swamps the silhouette.
+  // A roof light bar completes the off-road look.
+  if (art.offRoad) {
+    const barGeo = roundedBoxGeometry(length * 0.04, cabinHeight * 0.16, cabinWidth * 0.82, 0.02)
+    disposables.push(barGeo)
+    const bar = new Mesh(barGeo, shared.light)
+    bar.position.set(cabinX + cabinLength * 0.2, cabinY + cabinHeight * 0.62, 0)
+    bar.castShadow = true
+    body.add(bar)
+    headlights.push(bar)
+  }
+
+  // -- Bumpers, grille, plates ----------------------------------------------------
   const bumperGeo = roundedBoxGeometry(
-    length * 0.025,
-    lowerHeight * 0.17,
-    bodyWidth * 0.8,
-    lowerHeight * 0.07,
+    length * 0.03,
+    lowerHeight * 0.16,
+    bodyWidth * (art.offRoad ? 1.0 : 0.8),
+    lowerHeight * 0.06,
   )
   disposables.push(bumperGeo)
   for (const sx of [length * 0.487, -length * 0.487]) {
     const bumper = new Mesh(bumperGeo, shared.trim)
-    bumper.position.set(sx, clearance + lowerHeight * 0.26, 0)
+    bumper.position.set(sx, clearance + lowerHeight * 0.24, 0)
     body.add(bumper)
   }
 
   const grilleGeo = roundedBoxGeometry(
     length * 0.015,
-    lowerHeight * 0.15,
+    lowerHeight * 0.14,
     bodyWidth * 0.42,
-    lowerHeight * 0.05,
+    lowerHeight * 0.04,
   )
   disposables.push(grilleGeo)
   const grille = new Mesh(grilleGeo, shared.chrome)
-  grille.position.set(length * 0.492, lowerY - lowerHeight * 0.08, 0)
+  grille.position.set(length * 0.492, lowerY - lowerHeight * 0.1, 0)
   body.add(grille)
 
-  const plateGeo = roundedBoxGeometry(
-    length * 0.012,
-    lowerHeight * 0.12,
-    bodyWidth * 0.26,
-    0.008,
-  )
+  const plateGeo = roundedBoxGeometry(length * 0.012, lowerHeight * 0.11, bodyWidth * 0.24, 0.008)
   disposables.push(plateGeo)
   for (const sx of [length * 0.495, -length * 0.495]) {
     const plate = new Mesh(plateGeo, shared.plate)
@@ -305,40 +369,30 @@ export function createCar(options: CarModelOptions, shared: CarSharedMaterials):
     body.add(plate)
   }
 
-  // -- Wing mirrors ----------------------------------------------------------
-  const mirrorGeo = roundedBoxGeometry(
-    length * 0.018,
-    cabinHeight * 0.16,
-    bodyWidth * 0.06,
-    0.012,
-  )
+  // -- Wing mirrors -------------------------------------------------------------------
+  const mirrorGeo = roundedBoxGeometry(length * 0.018, cabinHeight * 0.15, bodyWidth * 0.06, 0.012)
   disposables.push(mirrorGeo)
   for (const side of [-1, 1]) {
     const mirror = new Mesh(mirrorGeo, shared.trim)
     mirror.position.set(
       cabinX + cabinLength * 0.44,
-      cabinY - cabinHeight * 0.08,
+      cabinY - cabinHeight * 0.06,
       side * (cabinWidth / 2 + bodyWidth * 0.04),
     )
     body.add(mirror)
   }
 
-  // -- Exhaust ----------------------------------------------------------------
-  const exhaustGeo = discGeometry(wheelRadius * 0.2, length * 0.03, 8)
+  // -- Exhaust ---------------------------------------------------------------------------
+  const exhaustGeo = discGeometry(wheelRadius * 0.14, length * 0.03, 8)
   disposables.push(exhaustGeo)
   const exhaust = new Mesh(exhaustGeo, shared.chrome)
   exhaust.rotation.y = Math.PI / 2
-  exhaust.position.set(-length * 0.5, clearance * 0.95, bodyWidth * 0.24)
+  exhaust.position.set(-length * 0.5, clearance * 0.7, bodyWidth * 0.24)
   body.add(exhaust)
 
-  // -- Optional details --------------------------------------------------------
+  // -- Optional details ----------------------------------------------------------------
   if (art.hasSign) {
-    const signGeo = roundedBoxGeometry(
-      cabinLength * 0.26,
-      cabinHeight * 0.26,
-      cabinWidth * 0.34,
-      0.025,
-    )
+    const signGeo = roundedBoxGeometry(cabinLength * 0.24, cabinHeight * 0.24, cabinWidth * 0.32, 0.025)
     disposables.push(signGeo)
     const signMat = new MeshStandardMaterial({
       color: 0xffc93c,
@@ -354,22 +408,22 @@ export function createCar(options: CarModelOptions, shared: CarSharedMaterials):
   }
 
   if (art.hasStripe) {
-    const stripeGeo = roundedBoxGeometry(
-      length * 0.94,
-      lowerHeight * 0.13,
-      bodyWidth * 1.02,
-      0.02,
-    )
+    const stripeGeo = roundedBoxGeometry(length * 0.9, lowerHeight * 0.1, bodyWidth * 1.02, 0.02)
     disposables.push(stripeGeo)
-    const stripe = new Mesh(stripeGeo, shared.trim)
-    stripe.position.set(0, lowerY - lowerHeight * 0.2, 0)
+    const stripeMat = new MeshStandardMaterial({
+      color: 0xffffff,
+      roughness: 0.4,
+      metalness: 0.1,
+    })
+    disposables.push(stripeMat)
+    const stripe = new Mesh(stripeGeo, stripeMat)
+    stripe.position.set(0, lowerY + lowerHeight * 0.16, 0)
     body.add(stripe)
   }
 
-  // A soft contact shadow under the car. The sun's shadow map handles the
-  // cast shadow; this fills the dark contact patch a low-res map cannot
-  // resolve, and keeps the car anchored to the road on the low tier where
-  // shadows are switched off entirely.
+  // A soft contact shadow. The sun's shadow map handles the cast shadow; this
+  // fills the dark contact patch a low-res map cannot resolve, and keeps the
+  // car anchored on the low tier where shadows are off entirely.
   const blobGeo = plateGeometry(length * 1.02, bodyWidth * 1.25, bodyWidth * 0.4)
   disposables.push(blobGeo)
   const blobMat = new MeshLambertMaterial({

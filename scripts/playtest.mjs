@@ -213,6 +213,20 @@ try {
   if (!webgl) throw new Error('no WebGL context')
   pass('WebGL context is live')
 
+  // -- Title options ---------------------------------------------------------
+  const titleOptions = await evaluate('document.querySelectorAll(".title-option").length')
+  if (titleOptions < 3) throw new Error(`expected 3 title options, got ${titleOptions}`)
+  pass('title screen offers garage, sound and settings')
+
+  const titleGarageCards = await evaluate(`(() => {
+    document.querySelectorAll('.title-option')[0].click()
+    return document.querySelectorAll('.garage-card').length
+  })()`)
+  if (titleGarageCards < 6) throw new Error(`garage shows ${titleGarageCards} vehicles`)
+  pass(`garage lists ${titleGarageCards} vehicles before play`)
+  await evaluate('document.querySelector(".garage .shop-close").click(); true')
+  await sleep(300)
+
   // -- Start ----------------------------------------------------------------
   await evaluate('document.querySelector(".title-play").click(); true')
   await waitFor('town scene to exist', () => true, 20000)
@@ -335,6 +349,41 @@ try {
   const coinsNow = await evaluate('globalThis.__ts.state().coins')
   if (coinsNow < 0) throw new Error(`coins went negative: ${coinsNow}`)
   pass('coins never go negative')
+
+  // -- Buying a vehicle --------------------------------------------------------
+  const startVehicle = await evaluate('globalThis.__ts.activeVehicle()')
+  await evaluate('globalThis.__ts.grantCoins(4000); true')
+  await sleep(300)
+
+  const boughtMonster = await evaluate('globalThis.__ts.buyVehicle("monster")')
+  if (!boughtMonster) throw new Error('could not buy the monster truck')
+  const nowDriving = await evaluate('globalThis.__ts.activeVehicle()')
+  if (nowDriving !== 'monster') throw new Error(`expected to be driving monster, got ${nowDriving}`)
+  pass(`bought a vehicle and switched to it (${startVehicle} -> ${nowDriving})`)
+
+  // Buying the same vehicle twice must not charge twice.
+  const coinsAfterBuy = await evaluate('globalThis.__ts.state().coins')
+  await evaluate('globalThis.__ts.buyVehicle("monster"); true')
+  const coinsAfterRebuy = await evaluate('globalThis.__ts.state().coins')
+  if (coinsAfterRebuy !== coinsAfterBuy) throw new Error('re-buying an owned vehicle charged again')
+  pass('cannot buy the same vehicle twice')
+
+  // Every vehicle must be drivable — a broken model would throw on swap.
+  for (const id of ['taxi', 'van', 'sports', 'limo', 'monster', 'bus']) {
+    await evaluate(`globalThis.__ts.previewVehicle('${id}'); true`)
+  }
+  await sleep(400)
+  pass('every vehicle in the fleet loads and swaps cleanly')
+
+  await sleep(1200)
+  const persistedFleet = await evaluate(`(() => {
+    const raw = localStorage.getItem('transport-sim.save')
+    return raw ? JSON.parse(raw).data.ownedVehicles : null
+  })()`)
+  if (!persistedFleet || !persistedFleet.includes('monster')) {
+    throw new Error(`fleet not persisted: ${JSON.stringify(persistedFleet)}`)
+  }
+  pass('purchased vehicle persisted to storage')
 
   const mapPresent = await evaluate('!!document.querySelector(".minimap canvas")')
   if (!mapPresent) throw new Error('minimap missing')

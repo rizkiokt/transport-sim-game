@@ -78,7 +78,14 @@ export function applyFacadeWindows(material: Material, options: FacadeOptions = 
         `#include <common>
         varying vec3 vFacadeLocal;
         varying vec3 vFacadeNormal;
-        varying vec3 vFacadeScale;`,
+        varying vec3 vFacadeScale;
+
+        // Cheap 2D hash, used to give each window pane its own character.
+        float facadeHash(vec2 p) {
+          p = fract(p * vec2(123.34, 456.21));
+          p += dot(p, p + 45.32);
+          return fract(p.x * p.y);
+        }`,
       )
       .replace(
         '#include <color_fragment>',
@@ -91,30 +98,37 @@ export function applyFacadeWindows(material: Material, options: FacadeOptions = 
           // wrapping around a corner instantly reads as a texture bug.
           float sideness = max(n.x, n.z);
           if (sideness > 0.7) {
-            // Pick whichever wall this fragment faces.
-            vec2 uv = (n.x > n.z) ? vec2(worldPos.z, worldPos.y) : vec2(worldPos.x, worldPos.y);
+            // Pick whichever wall this fragment faces. The second component
+            // keeps the two faces from sharing a hash, so opposite walls do
+            // not have identical window patterns.
+            bool facingX = n.x > n.z;
+            vec2 uv = facingX ? vec2(worldPos.z, worldPos.y) : vec2(worldPos.x, worldPos.y);
+            float faceSalt = facingX ? 17.3 : 61.7;
 
             // Height measured from the base of the building.
             float height = worldPos.y + vFacadeScale.y * 0.5;
+
+            float storey = ${storeyHeight.toFixed(4)};
+            float spacing = ${spacingX.toFixed(4)};
 
             // Leave a parapet at the top and a plinth at the very bottom.
             float topLimit = vFacadeScale.y - 0.55;
             float inBody = step(0.35, height) * step(height, topLimit);
 
             // The ground floor is one taller storey of shopfront glazing.
-            float isGround = step(height, ${storeyHeight.toFixed(4)} * 1.05);
-            float pitchY = mix(${storeyHeight.toFixed(4)}, ${storeyHeight.toFixed(4)} * 1.35, isGround);
+            float isGround = step(height, storey * 1.05);
+            float pitchY = mix(storey, storey * 1.35, isGround);
             float fillY = mix(0.5, 0.72, isGround);
 
-            vec2 cell = vec2(uv.x / ${spacingX.toFixed(4)}, height / pitchY);
+            vec2 cell = vec2(uv.x / spacing, height / pitchY);
             vec2 g = fract(cell);
+            vec2 cellId = floor(cell);
 
             float halfX = 0.34;
             float halfY = fillY * 0.5;
             float inWindow =
               step(0.5 - halfX, g.x) * step(g.x, 0.5 + halfX) *
               step(0.5 - halfY, g.y) * step(g.y, 0.5 + halfY);
-
             inWindow *= inBody;
 
             // A darker recessed reveal around each pane gives the wall depth
@@ -126,8 +140,29 @@ export function applyFacadeWindows(material: Material, options: FacadeOptions = 
               step(0.5 - halfYr, g.y) * step(g.y, 0.5 + halfYr);
             inReveal = clamp(inReveal - inWindow, 0.0, 1.0) * inBody;
 
+            // Mullions: a cross of frame through each pane. A single flat
+            // rectangle reads as a hole; divided glazing reads as a window.
+            float barX = 1.0 - step(0.012, abs(g.x - 0.5));
+            float barY = 1.0 - step(0.016, abs(g.y - 0.5));
+            float inBar = clamp(barX + barY, 0.0, 1.0) * inWindow;
+
+            // A slim band marking each floor slab.
+            float band = (1.0 - step(0.045, g.y)) * inBody * (1.0 - inWindow);
+
+            // Per-pane variation: some rooms brighter, some darker, a few with
+            // a warm light on. Identical panes across a whole tower is the
+            // clearest possible tell that a facade is procedural.
+            float r = facadeHash(cellId + faceSalt);
+            vec3 glassBase = vec3(${glass[0]}, ${glass[1]}, ${glass[2]});
+            vec3 pane = glassBase * (0.72 + r * 0.75);
+            // Roughly one pane in nine is lit from inside.
+            float lit = step(0.89, r);
+            pane = mix(pane, vec3(1.0, 0.86, 0.55), lit * 0.75);
+
             diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 0.72, inReveal);
-            diffuseColor.rgb = mix(diffuseColor.rgb, vec3(${glass[0]}, ${glass[1]}, ${glass[2]}), inWindow * ${strength.toFixed(3)});
+            diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 0.86, band);
+            diffuseColor.rgb = mix(diffuseColor.rgb, pane, inWindow * ${strength.toFixed(3)});
+            diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * 1.25 + 0.06, inBar);
           }
         }`,
       )

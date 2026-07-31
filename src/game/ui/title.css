@@ -103,3 +103,202 @@
     animation: none;
   }
 }
+
+/* --------------------------------------------------------- title options */
+
+.title-options {
+  display: flex;
+  gap: clamp(12px, 3vmin, 22px);
+}
+
+.title-option {
+  display: grid;
+  place-items: center;
+  width: clamp(56px, 11vmin, 82px);
+  height: clamp(56px, 11vmin, 82px);
+  border: none;
+  border-radius: 50%;
+  padding: 0;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.92);
+  color: #1e3350;
+  box-shadow: 0 5px 0 rgba(30, 51, 80, 0.35), 0 8px 18px rgba(0, 0, 0, 0.2);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.title-option svg {
+  width: 54%;
+  height: 54%;
+}
+
+.title-option:active {
+  transform: translateY(4px);
+  box-shadow: 0 1px 0 rgba(30, 51, 80, 0.35);
+}
+
+.title-option .title-slash {
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+
+.title-option.is-muted .title-slash {
+  opacity: 1;
+}
+
+.title-option.is-muted .title-waves {
+  opacity: 0.25;
+}
+
+/* ---------------------------------------------------------- title stats */
+
+.title-stats {
+  display: flex;
+  gap: clamp(14px, 3vmin, 26px);
+  color: #fff;
+  font-size: clamp(17px, 3.4vmin, 24px);
+  font-weight: 700;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+
+.title-stat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.title-stat svg {
+  width: 1.3em;
+  height: 1.3em;
+}
+
+/* -------------------------------------------------------- settings sheet */
+
+.title-sheet {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 4vmin;
+  background: rgba(12, 22, 40, 0.6);
+  transition: opacity 200ms ease;
+}
+
+.title-sheet.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.title-sheet-panel {
+  position: relative;
+  width: min(460px, 92vw);
+  max-height: 88vh;
+  overflow-y: auto;
+  padding: clamp(20px, 4vmin, 30px);
+  border-radius: 22px;
+  background: #fdfbf4;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.4);
+  text-align: left;
+}
+
+.title-sheet-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 50%;
+  background: #e9e4d6;
+  color: #45506b;
+  cursor: pointer;
+  padding: 0;
+}
+
+.title-sheet-close svg {
+  width: 22px;
+  height: 22px;
+}
+
+.title-sheet-label {
+  margin: 18px 0 8px;
+  font-size: 15px;
+  font-weight: 700;
+  color: #6b7690;
+}
+
+.title-sheet-label:first-of-type {
+  margin-top: 28px;
+}
+
+.title-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.title-choices button,
+.title-wide {
+  flex: 1 1 auto;
+  min-height: 46px;
+  min-width: 84px;
+  padding: 0 14px;
+  border: 2px solid #ddd6c4;
+  border-radius: 12px;
+  background: #f2eee2;
+  color: #45506b;
+  font-family: inherit;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.title-wide {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.title-choices button.is-selected,
+.title-motion.is-selected {
+  background: #43c465;
+  border-color: #2f9a4b;
+  color: #fff;
+}
+
+.title-file {
+  display: none;
+}
+
+/* Destructive, so it looks it — and it takes two taps (see the handler). */
+.title-reset {
+  margin-top: 22px;
+  background: #fdf0ed;
+  border-color: #f0cfc6;
+  color: #b6432f;
+}
+
+.title-reset.is-armed {
+  background: #b6432f;
+  border-color: #93341f;
+  color: #fff;
+}
+
+.title-reset.is-armed::after {
+  content: ' — tap again';
+}
+
+.title-status {
+  margin: 10px 0 0;
+  min-height: 1.2em;
+  font-size: 14px;
+  color: #4a7a4a;
+  text-align: center;
+}
+
+.title-status.is-error {
+  color: #b6432f;
+}

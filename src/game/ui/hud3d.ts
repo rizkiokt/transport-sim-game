@@ -17,6 +17,7 @@ export interface HudCallbacks {
   onMuteToggle(): void
   onHorn(): void
   onShop(): void
+  onGarage(): void
 }
 
 /** Drag distances in CSS px for full steering / brake engagement. */
@@ -34,6 +35,7 @@ export class Hud3D {
   readonly #coinPill: HTMLDivElement
   readonly #muteButton: HTMLButtonElement
   readonly #shopButton!: HTMLButtonElement
+  readonly #garageButton!: HTMLButtonElement
   readonly #compass: HTMLDivElement
   readonly #compassArrow: HTMLDivElement
   readonly #stick: HTMLDivElement
@@ -79,6 +81,9 @@ export class Hud3D {
 
     this.#shopButton = this.#root.querySelector('.hud-shop') as HTMLButtonElement
     this.#shopButton.addEventListener('pointerdown', this.#onShopPress)
+
+    this.#garageButton = this.#root.querySelector('.hud-garage') as HTMLButtonElement
+    this.#garageButton.addEventListener('pointerdown', this.#onGaragePress)
 
     // Driving pointers are captured on the 3D surface, not the HUD, so
     // buttons naturally take precedence without any hit-test bookkeeping.
@@ -172,6 +177,12 @@ export class Hud3D {
     this.#callbacks.onShop()
   }
 
+  readonly #onGaragePress = (e: PointerEvent): void => {
+    e.preventDefault()
+    e.stopPropagation()
+    this.#callbacks.onGarage()
+  }
+
   readonly #onSurfaceDown = (e: PointerEvent): void => {
     if (this.#drivePointerId !== null) return // Already driving with another finger.
     this.#drivePointerId = e.pointerId
@@ -249,6 +260,14 @@ const TEMPLATE = `
 <button class="hud-shop" type="button" aria-label="Upgrades">
   <svg viewBox="0 0 32 32" aria-hidden="true">
     <path d="M20.5 4a7.5 7.5 0 00-7 10.2L4 23.7 8.3 28l9.5-9.5A7.5 7.5 0 1020.5 4z" fill="currentColor"/>
+  </svg>
+</button>
+
+<button class="hud-garage" type="button" aria-label="Garage">
+  <svg viewBox="0 0 32 32" aria-hidden="true">
+    <path d="M4 15L16 6l12 9v12a1 1 0 01-1 1H5a1 1 0 01-1-1z" fill="currentColor"/>
+    <rect x="9" y="19" width="14" height="9" rx="1.5" fill="#fdfbf4"/>
+    <path d="M9 22h14M9 25h14" stroke="currentColor" stroke-width="1.6"/>
   </svg>
 </button>
 

@@ -326,3 +326,180 @@
     animation: none;
   }
 }
+
+/* ------------------------------------------------------------------ garage */
+
+.garage {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 4vmin;
+  background: rgba(12, 22, 40, 0.55);
+  backdrop-filter: blur(3px);
+  pointer-events: auto;
+  font-family: var(--font-display);
+  transition: opacity 200ms ease;
+}
+
+.garage.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.garage-panel {
+  position: relative;
+  width: min(660px, 94vw);
+  max-height: 88vh;
+  overflow-y: auto;
+  padding: clamp(18px, 4vmin, 30px);
+  border-radius: 22px;
+  background: #fdfbf4;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.4);
+}
+
+.garage-list {
+  display: grid;
+  gap: clamp(10px, 2vmin, 14px);
+  margin-top: 40px;
+}
+
+.garage-card {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: clamp(8px, 2vmin, 16px);
+  padding: clamp(8px, 1.6vmin, 12px);
+  border-radius: 16px;
+  background: #f2eee2;
+  border: 3px solid transparent;
+  transition: border-color 200ms ease, opacity 200ms ease;
+}
+
+/* The current car is ringed, so "which one am I driving" is answered at a
+   glance without reading anything. */
+.garage-card.is-active {
+  border-color: #43c465;
+  background: #eaf7ec;
+}
+
+/* Locked cars stay visible but recede. Seeing the monster truck you cannot
+   afford yet is the whole reason to keep playing. */
+.garage-card.is-locked {
+  opacity: 0.62;
+}
+
+.garage-art {
+  width: clamp(78px, 17vmin, 118px);
+  height: clamp(40px, 8vmin, 56px);
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.garage-art svg {
+  width: 92%;
+  height: 92%;
+}
+
+.garage-seats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  max-width: 150px;
+  color: #6b7690;
+}
+
+.garage-seat svg {
+  width: clamp(9px, 1.8vmin, 13px);
+  height: clamp(12px, 2.4vmin, 17px);
+  display: block;
+}
+
+.garage-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: clamp(72px, 14vmin, 100px);
+  min-height: 48px;
+  padding: 0 clamp(10px, 2vmin, 16px);
+  border: none;
+  border-radius: 999px;
+  background: #43c465;
+  color: #fff;
+  font-family: inherit;
+  font-size: clamp(17px, 3.4vmin, 22px);
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 0 #2f9a4b;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition: transform 120ms ease, box-shadow 120ms ease, background 200ms ease;
+}
+
+.garage-action:active:not(:disabled) {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 #2f9a4b;
+}
+
+.garage-action:disabled {
+  background: #c9c2b1;
+  box-shadow: 0 4px 0 #aca594;
+  cursor: default;
+}
+
+.garage-card.is-active .garage-action:disabled {
+  background: #43c465;
+  box-shadow: 0 4px 0 #2f9a4b;
+  color: #fff;
+}
+
+.garage-coin {
+  width: 1.1em;
+  height: 1.1em;
+  flex: none;
+}
+
+.garage-action.is-bought {
+  animation: buy-pop 420ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .garage-action.is-bought {
+    animation: none;
+  }
+}
+
+/* Garage button sits under the shop button in the same right-hand stack. */
+.hud-garage {
+  position: absolute;
+  pointer-events: auto;
+  top: calc(clamp(12px, 2.5vmin, 24px) + (clamp(52px, 9vmin, 72px) + 12px) * 2);
+  right: clamp(12px, 2.5vmin, 24px);
+  display: grid;
+  place-items: center;
+  width: clamp(52px, 9vmin, 72px);
+  height: clamp(52px, 9vmin, 72px);
+  border: none;
+  border-radius: 50%;
+  padding: 0;
+  cursor: pointer;
+  background: #3f8ee8;
+  color: #fff;
+  box-shadow: 0 4px 0 #2b6cb5, 0 6px 16px rgba(0, 0, 0, 0.25);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition: transform 120ms ease;
+}
+
+.hud-garage svg {
+  width: 58%;
+  height: 58%;
+}
+
+.hud-garage:active {
+  transform: translateY(3px);
+}

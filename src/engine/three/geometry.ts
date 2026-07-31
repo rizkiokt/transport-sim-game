@@ -109,6 +109,55 @@ export function taperedBlockGeometry(
 }
 
 /**
+ * A car's greenhouse: a rounded box whose top is shorter and pushed back,
+ * producing a raked windscreen and a slight rear slope.
+ *
+ * Windscreen rake is the strongest single cue for what kind of vehicle
+ * something is — a box cabin reads as a van no matter what else you do to it,
+ * and the same body with a raked screen reads as a sports car.
+ *
+ * @param slope 0 = upright (van), 1 = heavily raked (sports car)
+ */
+export function cabinGeometry(
+  length: number,
+  height: number,
+  width: number,
+  slope: number,
+  radius = 0.05,
+): BufferGeometry {
+  const geometry = roundedBoxGeometry(length, height, width, radius)
+
+  const pos = geometry.attributes['position']
+  if (!pos) return geometry
+
+  const array = pos.array as Float32Array
+  const halfH = height / 2
+  // How far the roof is pulled in at each end, as a fraction of length.
+  const frontPull = length * 0.34 * slope
+  const rearPull = length * 0.16 * slope
+  // Roofs are also narrower than shoulders.
+  const roofNarrow = 0.9 - 0.06 * slope
+
+  for (let i = 0; i < array.length; i += 3) {
+    const x = array[i]!
+    const y = array[i + 1]!
+    // 0 at the waistline, 1 at the roof.
+    const t = Math.max(0, (y + halfH) / height)
+    if (t <= 0) continue
+
+    // Pull the front of the roof backwards and the rear forwards.
+    if (x > 0) array[i] = x - frontPull * t * (x / (length / 2))
+    else array[i] = x + rearPull * t * (-x / (length / 2))
+
+    array[i + 2] = array[i + 2]! * (1 + (roofNarrow - 1) * t)
+  }
+
+  pos.needsUpdate = true
+  geometry.computeVertexNormals()
+  return geometry
+}
+
+/**
  * A soft blob — a low-poly sphere with its vertices nudged outward
  * irregularly. Used for tree canopies and bushes, where perfect spheres look
  * artificial and noise makes them read as foliage.

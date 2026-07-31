@@ -257,19 +257,34 @@ export function createCharacter(seed: number | string): CharacterParts {
   // -- Arms --------------------------------------------------------------------
   // Held slightly away from the body so there is daylight between arm and
   // torso — without that gap the silhouette fuses into one blob.
-  const armGeo = capsuleGeometry(H * 0.036, torsoHeight * 0.62, 6)
+  // Upper arm in the shirt colour, forearm in skin: one extra mesh per arm,
+  // and the figure stops reading as a single moulded colour.
+  const sleeveGeo = capsuleGeometry(H * 0.038, torsoHeight * 0.26, 6)
+  const forearmGeo = capsuleGeometry(H * 0.032, torsoHeight * 0.28, 6)
   const handGeo = headGeometry(H * 0.042, 1, 8)
-  disposables.push(armGeo, handGeo)
+  disposables.push(sleeveGeo, forearmGeo, handGeo)
+
+  // A collar band where the neck meets the shirt.
+  const collarGeo = roundedBoxGeometry(H * 0.135, H * 0.03, shoulderWidth * 1.02, H * 0.014)
+  disposables.push(collarGeo)
+  const collar = new Mesh(collarGeo, topMat)
+  collar.position.y = shoulderY - H * 0.012
+  body.add(collar)
 
   // The waving arm gets its own pivot at the shoulder.
   const arm = new Group()
   arm.position.set(0, shoulderY - H * 0.02, -shoulderWidth * 0.55)
   body.add(arm)
 
-  const armMesh = new Mesh(armGeo, topMat)
-  armMesh.position.y = -torsoHeight * 0.36
-  armMesh.castShadow = true
-  arm.add(armMesh)
+  const sleeve = new Mesh(sleeveGeo, topMat)
+  sleeve.position.y = -torsoHeight * 0.2
+  sleeve.castShadow = true
+  arm.add(sleeve)
+
+  const forearm = new Mesh(forearmGeo, skinMat)
+  forearm.position.y = -torsoHeight * 0.5
+  forearm.castShadow = true
+  arm.add(forearm)
 
   const hand = new Mesh(handGeo, skinMat)
   hand.position.y = -torsoHeight * 0.68
@@ -281,10 +296,15 @@ export function createCharacter(seed: number | string): CharacterParts {
   stillArm.rotation.x = -0.14
   body.add(stillArm)
 
-  const stillArmMesh = new Mesh(armGeo, topMat)
-  stillArmMesh.position.y = -torsoHeight * 0.36
-  stillArmMesh.castShadow = true
-  stillArm.add(stillArmMesh)
+  const stillSleeve = new Mesh(sleeveGeo, topMat)
+  stillSleeve.position.y = -torsoHeight * 0.2
+  stillSleeve.castShadow = true
+  stillArm.add(stillSleeve)
+
+  const stillForearm = new Mesh(forearmGeo, skinMat)
+  stillForearm.position.y = -torsoHeight * 0.5
+  stillForearm.castShadow = true
+  stillArm.add(stillForearm)
 
   const stillHand = new Mesh(handGeo, skinMat)
   stillHand.position.y = -torsoHeight * 0.68
