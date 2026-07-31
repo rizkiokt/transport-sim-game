@@ -22,7 +22,7 @@ const chrome = spawn(
   [
     '--headless=new',
     '--no-sandbox',
-    '--disable-gpu',
+    '--enable-unsafe-swiftshader',
     '--hide-scrollbars',
     '--window-size=1024,768',
     // Without this, headless throttles rAF to nothing when it thinks the page
@@ -123,21 +123,22 @@ try {
     expression: `(() => {
       const g = globalThis.game
       const canvas = document.getElementById('game-canvas')
-      const boot = document.getElementById('boot')
       return JSON.stringify({
         hasGame: !!g,
         canvasSize: canvas ? [canvas.width, canvas.height] : null,
-        bootPresent: !!boot,
-        bootHidden: boot ? boot.classList.contains('is-hidden') : null,
+        bootPresent: !!document.getElementById('boot'),
+        titlePresent: !!document.querySelector('.title'),
+        hudPresent: !!document.querySelector('.hud'),
         running: g ? g.loop.running : null,
-        totalSteps: g ? g.stats.totalSteps : null,
+        started: g ? g.started : null,
         fps: g ? Math.round(g.stats.fps) : null,
         updateMs: g ? Number(g.stats.updateMs.toFixed(3)) : null,
         renderMs: g ? Number(g.stats.renderMs.toFixed(3)) : null,
+        totalSteps: g ? g.stats.totalSteps : null,
         droppedFrames: g ? g.stats.droppedFrames : null,
-        scene: g ? g.scenes.stackNames : null,
-        elapsed: g ? Number(g.elapsed.toFixed(2)) : null,
-        tier: g ? g.settings.tier : null,
+        tier: g ? g.renderer.tier : null,
+        drawCalls: g ? g.renderStats.calls : null,
+        triangles: g ? g.renderStats.triangles : null,
       })
     })()`,
     returnByValue: true,

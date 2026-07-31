@@ -15,7 +15,20 @@
 
 import { clamp } from '../math/scalar.js'
 import { type Vec2, vec2 } from '../math/vec2.js'
-import type { Viewport } from '../render/viewport.js'
+
+/**
+ * The minimal surface the input manager needs from whatever owns the canvas.
+ *
+ * Declared structurally rather than importing a concrete Viewport so the same
+ * manager serves the 2D and 3D renderers — neither of which should have to
+ * know the other exists.
+ */
+export interface PointerSurface {
+  /** The element that receives pointer events. */
+  readonly canvas: HTMLElement
+  /** Convert client coordinates into the surface's own coordinate space. */
+  clientToCanvas(clientX: number, clientY: number, out?: { x: number; y: number }): { x: number; y: number }
+}
 
 export interface PointerState {
   /** Stable id: the touch identifier, or a constant for the mouse. */
@@ -72,7 +85,7 @@ const MOUSE_POINTER_ID = -1
 const DRAG_THRESHOLD = 10
 
 export class InputManager {
-  readonly #viewport: Viewport
+  readonly #surface: PointerSurface
   readonly #target: HTMLElement
 
   readonly #pointers = new Map<number, PointerState>()
@@ -95,9 +108,9 @@ export class InputManager {
   #disposed = false
   #enabled = true
 
-  constructor(viewport: Viewport, bindings: ActionMap = {}) {
-    this.#viewport = viewport
-    this.#target = viewport.canvas
+  constructor(surface: PointerSurface, bindings: ActionMap = {}) {
+    this.#surface = surface
+    this.#target = surface.canvas
     this.setBindings(bindings)
     this.#attach()
   }
@@ -356,7 +369,7 @@ export class InputManager {
     this.#lastDevice = e.pointerType === 'touch' ? 'touch' : 'mouse'
 
     const id = e.pointerType === 'mouse' ? MOUSE_POINTER_ID : e.pointerId
-    const pos = this.#viewport.clientToCanvas(e.clientX, e.clientY)
+    const pos = this.#surface.clientToCanvas(e.clientX, e.clientY)
 
     this.#pointers.set(id, {
       id,
@@ -390,7 +403,7 @@ export class InputManager {
 
     e.preventDefault()
 
-    const pos = this.#viewport.clientToCanvas(e.clientX, e.clientY)
+    const pos = this.#surface.clientToCanvas(e.clientX, e.clientY)
     pointer.delta.x += pos.x - pointer.position.x
     pointer.delta.y += pos.y - pointer.position.y
     pointer.position.x = pos.x

@@ -11,12 +11,17 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "verify": "node scripts/verify-boot.mjs"
+    "verify": "node scripts/verify-boot.mjs",
+    "playtest": "node scripts/playtest.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.1.2",
+    "@types/three": "^0.185.1",
     "typescript": "^7.0.2",
     "vite": "^8.2.0",
     "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "three": "^0.185.1"
   }
 }

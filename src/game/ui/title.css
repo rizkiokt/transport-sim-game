@@ -1,0 +1,105 @@
+/**
+ * The title screen.
+ *
+ * One name and one enormous button. Anything else tappable here is a trap for
+ * a non-reader, so there is nothing else — the whole screen is a soft gradient
+ * and the eye has exactly one place to land.
+ */
+
+.title {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: clamp(28px, 6vmin, 60px);
+  background: linear-gradient(180deg, #8fd0f0 0%, #a9dcf5 45%, #7cc06a 45%, #63a24f 100%);
+  font-family: var(--font-display);
+  transition: opacity 380ms ease, transform 380ms ease;
+}
+
+.title.is-leaving {
+  opacity: 0;
+  transform: scale(1.06);
+  pointer-events: none;
+}
+
+.title-name {
+  margin: 0;
+  padding: 0 6vw;
+  text-align: center;
+  font-size: clamp(34px, 9vmin, 88px);
+  font-weight: 700;
+  line-height: 1.05;
+  color: #ffc93c;
+  /* A chunky dark outline keeps the title legible against sky or grass. */
+  -webkit-text-stroke: clamp(3px, 0.8vmin, 7px) #23405e;
+  paint-order: stroke fill;
+  text-shadow: 0 6px 0 rgba(35, 64, 94, 0.35);
+  animation: title-drop 700ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+@keyframes title-drop {
+  from {
+    opacity: 0;
+    transform: translateY(-40px) scale(0.85);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.title-play {
+  display: grid;
+  place-items: center;
+  width: clamp(96px, 22vmin, 168px);
+  height: clamp(96px, 22vmin, 168px);
+  border: clamp(4px, 1vmin, 8px) solid #ffffff;
+  border-radius: 50%;
+  background: #43c465;
+  color: #ffffff;
+  cursor: pointer;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  box-shadow: 0 8px 0 #2f9a4b, 0 14px 30px rgba(0, 0, 0, 0.28);
+  animation: play-pulse 2s ease-in-out infinite;
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.title-play svg {
+  width: 52%;
+  height: 52%;
+  /* Nudge the triangle so it reads as centred inside the circle. */
+  margin-left: 6%;
+}
+
+.title-play:active {
+  transform: translateY(6px);
+  box-shadow: 0 2px 0 #2f9a4b, 0 6px 14px rgba(0, 0, 0, 0.28);
+  animation: none;
+}
+
+.title-play:focus-visible {
+  outline: 4px solid #ffc93c;
+  outline-offset: 6px;
+}
+
+@keyframes play-pulse {
+  0%,
+  100% {
+    scale: 1;
+  }
+  50% {
+    scale: 1.07;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .title-name,
+  .title-play {
+    animation: none;
+  }
+}

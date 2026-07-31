@@ -1,0 +1,220 @@
+/**
+ * HUD styling.
+ *
+ * The container never receives pointer events — only the buttons opt back in
+ * — so a finger dragged anywhere else falls through to the driving surface.
+ * Everything is sized in `clamp()` against viewport units so the same layout
+ * works on a phone and a desktop without breakpoints, and every touch target
+ * clears the 48px accessibility floor by a wide margin.
+ */
+
+.hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+  font-family: var(--font-display);
+  /* Respect notches and rounded corners on tablets. */
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom)
+    env(safe-area-inset-left);
+}
+
+/* ------------------------------------------------------------------ coins */
+
+.hud-coins {
+  position: absolute;
+  top: clamp(12px, 2.5vmin, 24px);
+  left: clamp(12px, 2.5vmin, 24px);
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  padding: 0.3em 0.85em 0.3em 0.35em;
+  border-radius: 999px;
+  background: rgba(24, 38, 66, 0.82);
+  color: #fff;
+  font-size: clamp(20px, 4.2vmin, 34px);
+  font-weight: 700;
+  line-height: 1;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+  transform-origin: left center;
+}
+
+.hud-coin-icon {
+  width: 1.35em;
+  height: 1.35em;
+  flex: none;
+}
+
+.hud-coins.is-pop {
+  animation: coin-pop 460ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes coin-pop {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(1.22);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* ----------------------------------------------------------------- buttons */
+
+.hud-mute,
+.hud-horn {
+  position: absolute;
+  pointer-events: auto;
+  display: grid;
+  place-items: center;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  border-radius: 50%;
+  /* Generous targets: small fingers miss, and missing is frustrating. */
+  width: clamp(52px, 9vmin, 72px);
+  height: clamp(52px, 9vmin, 72px);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition: transform 120ms ease;
+}
+
+.hud-mute:active,
+.hud-horn:active {
+  transform: scale(0.9);
+}
+
+.hud-mute svg,
+.hud-horn svg {
+  width: 58%;
+  height: 58%;
+}
+
+.hud-mute {
+  top: clamp(12px, 2.5vmin, 24px);
+  right: clamp(12px, 2.5vmin, 24px);
+  background: rgba(24, 38, 66, 0.82);
+  color: #fff;
+}
+
+.hud-mute .hud-mute-slash {
+  opacity: 0;
+  transition: opacity 140ms ease;
+}
+
+.hud-mute.is-muted .hud-mute-slash {
+  opacity: 1;
+}
+
+.hud-mute.is-muted .hud-mute-waves {
+  opacity: 0.25;
+}
+
+.hud-horn {
+  right: clamp(12px, 2.5vmin, 24px);
+  bottom: clamp(12px, 2.5vmin, 24px);
+  width: clamp(64px, 12vmin, 92px);
+  height: clamp(64px, 12vmin, 92px);
+  background: #ff8c42;
+  color: #fff;
+  box-shadow: 0 5px 0 #d96a24, 0 8px 18px rgba(0, 0, 0, 0.28);
+}
+
+.hud-horn:active {
+  transform: translateY(4px) scale(0.96);
+  box-shadow: 0 1px 0 #d96a24, 0 4px 10px rgba(0, 0, 0, 0.28);
+}
+
+/* ---------------------------------------------------------------- compass */
+
+.hud-compass {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: clamp(58px, 11vmin, 88px);
+  height: clamp(58px, 11vmin, 88px);
+  margin: calc(clamp(58px, 11vmin, 88px) / -2) 0 0 calc(clamp(58px, 11vmin, 88px) / -2);
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--compass-color, #ff5a5a);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
+  /* Sits above the car, out of the way of the road ahead. */
+  transform: translateY(-28vmin);
+  transition: opacity 260ms ease;
+  opacity: 1;
+}
+
+.hud-compass.is-hidden {
+  opacity: 0;
+}
+
+.hud-compass-arrow {
+  width: 68%;
+  height: 68%;
+  display: grid;
+  place-items: center;
+  animation: compass-bob 1.6s ease-in-out infinite;
+}
+
+.hud-compass-arrow svg {
+  width: 100%;
+  height: 100%;
+}
+
+@keyframes compass-bob {
+  0%,
+  100% {
+    scale: 1;
+  }
+  50% {
+    scale: 1.12;
+  }
+}
+
+/* ------------------------------------------------------------ touch stick */
+
+.hud-stick {
+  position: fixed;
+  width: 116px;
+  height: 116px;
+  margin: -58px 0 0 -58px;
+  border-radius: 50%;
+  border: 3px solid rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.12);
+  opacity: 0;
+  transition: opacity 140ms ease;
+  pointer-events: none;
+}
+
+.hud-stick.is-active {
+  opacity: 1;
+}
+
+.hud-stick-knob {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.85);
+  transform: translate(-50%, -50%);
+}
+
+/* A mouse user gets keyboard controls; the stick would just be noise. */
+@media (hover: hover) and (pointer: fine) {
+  .hud-stick {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hud-coins.is-pop,
+  .hud-compass-arrow {
+    animation: none;
+  }
+}
