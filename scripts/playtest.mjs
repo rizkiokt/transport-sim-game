@@ -385,6 +385,21 @@ try {
   }
   pass('purchased vehicle persisted to storage')
 
+  // -- Mute actually mutes -------------------------------------------------------
+  // Regression test. The in-game mute button used to update SettingsManager,
+  // the save and the HUD icon while never touching the AudioBus, so sound kept
+  // playing. A mute button that does not mute is close to the worst bug a
+  // children's game can ship — it is the control a parent reaches for first.
+  const muteWorks = await evaluate(`(() => {
+    const before = globalThis.game.audio.muted
+    document.querySelector('.hud-mute').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    const after = globalThis.game.audio.muted
+    return before !== after
+  })()`)
+  if (!muteWorks) throw new Error('the mute button did not change the audio bus')
+  pass('mute button actually mutes the audio')
+  await evaluate(`document.querySelector('.hud-mute').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); true`)
+
   const mapPresent = await evaluate('!!document.querySelector(".minimap canvas")')
   if (!mapPresent) throw new Error('minimap missing')
   pass('city map is present')

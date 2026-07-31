@@ -21,7 +21,7 @@ import { SaveStore } from '../engine/core/storage.js'
 import { VEHICLES } from '../content/vehicles.js'
 import { UPGRADES } from '../content/upgrades.js'
 
-export const SAVE_VERSION = 2
+export const SAVE_VERSION = 3
 const SAVE_KEY = 'transport-sim.save'
 
 export interface GameSave {
@@ -32,6 +32,16 @@ export interface GameSave {
   muted: boolean
   /** Upgrade track id -> level owned. Missing means level 0. */
   upgrades: Record<string, number>
+  /**
+   * Accessibility and quality preferences.
+   *
+   * These persist because they are the settings a PARENT sets on behalf of a
+   * child — gentler motion for someone prone to motion sickness, lower
+   * quality on a struggling tablet. Making them reset on every reload means
+   * re-setting them every session, which is precisely backwards.
+   */
+  reducedMotion: boolean
+  quality: 'auto' | 'low' | 'medium' | 'high'
 }
 
 export function createDefaultSave(): GameSave {
@@ -42,10 +52,13 @@ export function createDefaultSave(): GameSave {
     ownedVehicles: ['taxi'],
     muted: false,
     upgrades: {},
+    reducedMotion: false,
+    quality: 'auto',
   }
 }
 
 const KNOWN_VEHICLE_IDS = new Set(VEHICLES.map((v) => v.id))
+const QUALITY_VALUES = new Set<GameSave['quality']>(['auto', 'low', 'medium', 'high'])
 const UPGRADE_LIMITS = new Map(UPGRADES.map((u) => [u.id as string, u.maxLevel]))
 
 function validate(data: unknown): boolean {
@@ -77,6 +90,8 @@ export function sanitizeSave(save: GameSave): GameSave {
   }
 
   save.muted = Boolean(save.muted)
+  save.reducedMotion = Boolean(save.reducedMotion)
+  if (!QUALITY_VALUES.has(save.quality)) save.quality = 'auto'
 
   // Drop unknown tracks and clamp levels; an out-of-range level would
   // otherwise scale handling without limit.
@@ -100,6 +115,8 @@ export function createSaveStore(): SaveStore<GameSave> {
     migrations: {
       // v1 had no upgrades at all.
       1: (data: unknown) => ({ ...(data as object), upgrades: {} }),
+      // v2 did not persist accessibility or quality preferences.
+      2: (data: unknown) => ({ ...(data as object), reducedMotion: false, quality: 'auto' }),
     },
     validate,
   })
@@ -179,6 +196,10 @@ export function parseSaveFile(text: string): ImportResult {
   // Same forward migrations the storage layer applies.
   if (version < 2) {
     data = { ...(data as object), upgrades: {} }
+    migrated = true
+  }
+  if (version < 3) {
+    data = { ...(data as object), reducedMotion: false, quality: 'auto' }
     migrated = true
   }
 

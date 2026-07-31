@@ -91,6 +91,17 @@ export class Hud3D {
     this.#surface.addEventListener('pointermove', this.#onSurfaceMove)
     this.#surface.addEventListener('pointerup', this.#onSurfaceUp)
     this.#surface.addEventListener('pointercancel', this.#onSurfaceUp)
+
+    // Release fallbacks. Without these a lost pointerup latches the throttle
+    // at full FOREVER and, because the latched pointer id never clears, every
+    // subsequent finger is ignored — the child is left holding a car that
+    // drives itself and will not respond. Pointer capture can be broken by
+    // the browser, a context menu, an OS gesture, or the tab losing focus, so
+    // the canvas alone is not a reliable place to hear about the release.
+    window.addEventListener('pointerup', this.#onGlobalRelease)
+    window.addEventListener('pointercancel', this.#onGlobalRelease)
+    window.addEventListener('blur', this.#onLostFocus)
+    document.addEventListener('visibilitychange', this.#onVisibilityChange)
   }
 
   /** Tell the HUD the balance changed; the counter rolls up to meet it. */
@@ -154,6 +165,10 @@ export class Hud3D {
     this.#surface.removeEventListener('pointermove', this.#onSurfaceMove)
     this.#surface.removeEventListener('pointerup', this.#onSurfaceUp)
     this.#surface.removeEventListener('pointercancel', this.#onSurfaceUp)
+    window.removeEventListener('pointerup', this.#onGlobalRelease)
+    window.removeEventListener('pointercancel', this.#onGlobalRelease)
+    window.removeEventListener('blur', this.#onLostFocus)
+    document.removeEventListener('visibilitychange', this.#onVisibilityChange)
     this.#root.remove()
   }
 
@@ -184,7 +199,10 @@ export class Hud3D {
   }
 
   readonly #onSurfaceDown = (e: PointerEvent): void => {
-    if (this.#drivePointerId !== null) return // Already driving with another finger.
+    // A resting palm or grip-thumb touches down first and, under a
+    // first-pointer-wins rule, latches the throttle and locks out the finger
+    // the child is actually steering with. The most recent deliberate touch
+    // should always be the one driving, so a new pointer takes over.
     this.#drivePointerId = e.pointerId
     this.#driveStartX = e.clientX
     this.#driveStartY = e.clientY
@@ -224,6 +242,25 @@ export class Hud3D {
 
   readonly #onSurfaceUp = (e: PointerEvent): void => {
     if (e.pointerId !== this.#drivePointerId) return
+    this.#releaseDriving()
+  }
+
+  /** Window-level release, for events the canvas never sees. */
+  readonly #onGlobalRelease = (e: PointerEvent): void => {
+    if (e.pointerId !== this.#drivePointerId) return
+    this.#releaseDriving()
+  }
+
+  readonly #onLostFocus = (): void => {
+    this.#releaseDriving()
+  }
+
+  readonly #onVisibilityChange = (): void => {
+    if (document.hidden) this.#releaseDriving()
+  }
+
+  /** Drop all driving intent. Safe to call when not driving. */
+  #releaseDriving(): void {
     this.#drivePointerId = null
     this.touchThrottle = 0
     this.touchSteer = 0

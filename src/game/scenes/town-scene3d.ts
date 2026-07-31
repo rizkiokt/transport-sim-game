@@ -205,6 +205,29 @@ export class TownScene3D {
     this.#installDevHooks()
   }
 
+  /**
+   * Re-apply everything derived from settings and the quality tier.
+   *
+   * These were previously read ONCE in the constructor, so the adaptive
+   * quality watchdog only half-worked: it changed pixel ratio and draw
+   * distance on the renderer, but shadows, image-based lighting, fog range,
+   * particle density and camera shake all stayed frozen at whatever the tier
+   * was when the town was built. A downgrade left the costs it was meant to
+   * remove, and moved the far plane in without moving the fog, producing a
+   * hard geometry cut-off in clear air.
+   */
+  applySettings(): void {
+    const settings = this.#deps.settings
+    const profile = RENDER_PROFILES[this.#deps.renderer.tier]
+
+    this.#environment.setShadowMapSize(profile.shadowMapSize)
+    this.#environment.setEnvironmentEnabled(profile.environmentLighting)
+    this.#environment.setFogRange(profile.drawDistance * 0.35, profile.drawDistance * 0.95)
+
+    this.#particles.intensity = settings.particleScale
+    this.#chase.shakeScale = settings.shakeScale
+  }
+
   update(dt: number): void {
     this.#time += dt
     const input = this.#deps.input
@@ -459,7 +482,11 @@ export class TownScene3D {
   }
 
   #handleDropoff(baseFare: number, x: number, y: number, z: number): void {
-    const fare = Math.round(baseFare * this.#car.effects.fare)
+    // Both multipliers apply. The vehicle's was declared on every vehicle and
+    // never read, which made every car pay the same fare — so buying a bigger
+    // one was a pure downgrade: slower, and no better paid. Exactly the kind
+    // of trap the design forbids, since a child cannot tell it happened.
+    const fare = Math.round(baseFare * this.#car.effects.fare * this.#car.def.fareMultiplier)
     this.#save.coins += fare
     this.#save.totalRides += 1
     this.#deps.store.save(this.#save)

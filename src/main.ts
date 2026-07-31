@@ -78,8 +78,15 @@ async function main(): Promise<void> {
 
   const store = createSaveStore()
   const save = sanitizeSave(store.load().data)
-  settings.set('muted', save.muted)
+
+  // Restore every persisted preference, not just sound.
+  settings.update({
+    muted: save.muted,
+    reducedMotion: save.reducedMotion,
+    qualityPreference: save.quality,
+  })
   audio.setMuted(save.muted)
+  if (save.quality !== 'auto') renderer.setTier(save.quality)
 
   const skyScene = createSkyScene()
 
@@ -115,11 +122,16 @@ async function main(): Promise<void> {
     onQualityChange: (tier) => {
       settings.set('qualityPreference', tier)
       if (tier !== 'auto') renderer.setTier(tier)
+      save.quality = tier
+      store.save(save)
       title.refresh(titleState())
       playClick(audio)
     },
     onReducedMotionToggle: () => {
-      settings.set('reducedMotion', !settings.settings.reducedMotion)
+      const next = !settings.settings.reducedMotion
+      settings.set('reducedMotion', next)
+      save.reducedMotion = next
+      store.save(save)
       title.refresh(titleState())
       playClick(audio)
     },
@@ -133,7 +145,11 @@ async function main(): Promise<void> {
         Object.assign(save, result.save)
         store.save(save)
         store.flush()
-        settings.set('muted', save.muted)
+        settings.update({
+          muted: save.muted,
+          reducedMotion: save.reducedMotion,
+          qualityPreference: save.quality,
+        })
         audio.setMuted(save.muted)
         title.refresh(titleState())
         title.setStatus(result.migrated ? 'Loaded (from an older version).' : 'Loaded!')
@@ -223,9 +239,27 @@ async function main(): Promise<void> {
     { updateHz: 60 },
   )
 
-  // Quality changes have to reach the renderer, which owns pixel ratio and
-  // shadow state.
-  settings.events.on('qualityChanged', ({ tier }) => renderer.setTier(tier))
+  // -- Settings propagation ----------------------------------------------------
+  // One subscription, applied to every consumer.
+  //
+  // This was previously missing entirely, and the in-game mute button did not
+  // mute: it updated SettingsManager, the save and the HUD icon, but nothing
+  // ever told the AudioBus. The title-screen mute worked only because it
+  // called the audio bus directly. Anything that changes settings from
+  // anywhere now reaches everything that cares.
+  const applySettings = (): void => {
+    audio.setMuted(settings.settings.muted)
+    audio.setMasterVolume(settings.settings.masterVolume)
+    town?.applySettings()
+  }
+
+  settings.events.on('changed', applySettings)
+  settings.events.on('qualityChanged', ({ tier }) => {
+    renderer.setTier(tier)
+    // The renderer owns pixel ratio and draw distance; the scene owns shadows,
+    // image-based lighting, fog and particle density. Both have to move.
+    town?.applySettings()
+  })
 
   loop.start()
 

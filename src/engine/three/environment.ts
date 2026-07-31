@@ -164,6 +164,18 @@ export class Environment {
     this.sun.position.set(snappedX + 28, y + 44, snappedZ + 18)
   }
 
+  /**
+   * Move the fog band. Must follow the camera's draw distance: fog that ends
+   * beyond the far plane leaves geometry popping out of clear air.
+   */
+  setFogRange(near: number, far: number): void {
+    const fog = this.scene.fog
+    if (fog && 'near' in fog && 'far' in fog) {
+      fog.near = near
+      fog.far = far
+    }
+  }
+
   /** Add an object that should be lit by this environment. */
   add(object: Object3D): void {
     this.scene.add(object)

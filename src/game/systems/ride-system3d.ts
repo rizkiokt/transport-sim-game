@@ -52,8 +52,14 @@ export interface RideEvents {
  * enough, at any speed. The boarding animation makes even a fast pickup read
  * as intentional, because the passenger hops toward the moving car.
  */
-const PICKUP_RADIUS = 3.6
-const DROPOFF_RADIUS = 5
+// The road is 5.3 wide and passengers stand 3.3 out from the centreline, so a
+// car in the far lane sits ~6 units from the passenger. A radius of 3.6 meant
+// driving down the "wrong" side sailed straight past with no feedback — and
+// nothing in the game tells a child which side to drive on. These now cover
+// the full road width plus the pavement, so any approach along the street
+// collects them.
+const PICKUP_RADIUS = 6.5
+const DROPOFF_RADIUS = 7.5
 const BOARD_TIME = 0.55
 const CELEBRATE_TIME = 1.8
 const GAP_TIME = 1.1
@@ -164,6 +170,7 @@ export class RideSystem3D {
         const dz = car.z - this.#passengerZ
         const dist = Math.hypot(dx, dz)
         this.#animateWaiting(dist)
+        this.#animateBeacon(dt)
 
         // Turn to watch the car. A passenger who stares rigidly ahead while
         // you drive round them reads as a prop; one who tracks you reads as a
@@ -176,6 +183,7 @@ export class RideSystem3D {
 
         if (dist < PICKUP_RADIUS) {
           this.phase = 'boarding'
+          this.#beacon.visible = false
           this.#phaseTime = 0
           this.#events.onPickup(this.#passengerX, 0.6, this.#passengerZ)
         }
@@ -291,6 +299,15 @@ export class RideSystem3D {
 
     this.#replaceCharacter(seed)
     this.#showCharacterAt(spot.x, spot.z)
+
+    // The passenger gets the same beacon the destination does. Without it,
+    // finding the pickup was far harder than finding the dropoff: a 1-unit
+    // figure among 8-unit buildings is invisible from a street away, while
+    // the destination had a 14-unit beam over the rooftops. The asymmetry
+    // made the first half of every ride the hard half, for no reason.
+    this.#beacon.position.set(spot.x, 0, spot.z)
+    this.#beacon.visible = true
+
     this.phase = 'waiting'
   }
 

@@ -82,6 +82,8 @@ export class Vehicle3D {
   readonly #roadScratch: RoadPoint = { x: 0, y: 0, tangent: 0, distance: 0, segmentIndex: -1 }
   readonly #obstacleScratch: Obstacle3D[] = []
   #prevSpeed = 0
+  /** Seconds spent asking to move while going nowhere. Drives the unstick aid. */
+  #pushingTime = 0
 
   /** Wheel radius, for rolling the wheels at the right rate. */
   readonly #wheelRadius: number
@@ -107,6 +109,11 @@ export class Vehicle3D {
     this.maxSpeed = this.def.handling.maxSpeed * WORLD_SCALE * effects.speed
   }
 
+  /** True while the car is wedged and the steering aid is helping it out. */
+  get isStuck(): boolean {
+    return this.#pushingTime > 0.35
+  }
+
   place(x: number, z: number, heading: number): void {
     this.x = x
     this.z = z
@@ -116,6 +123,7 @@ export class Vehicle3D {
     this.visualPitch = 0
     this.visualRoll = 0
     this.steerAngle = 0
+    this.#pushingTime = 0
   }
 
   /** Velocity components on the ground plane. */
@@ -170,9 +178,25 @@ export class Vehicle3D {
     this.speed = clamp(this.speed, -reverseMax, surfaceMax)
 
     // -- Steering -----------------------------------------------------------
+    // Authority ramps with speed so the car cannot pirouette on the spot.
     const speedAbs = Math.abs(this.speed)
-    const authority =
+    let authority =
       clamp(speedAbs / (this.maxSpeed * 0.27), 0, 1) * (1 - 0.25 * clamp(this.speedFraction, 0, 1))
+
+    // ...but that rule alone is a softlock. Nose the car into a wall and the
+    // collision pins speed to ~0, which pins authority to ~0, so holding the
+    // throttle and waggling left and right cannot turn the car AT ALL. The
+    // only escape is reverse, which on touch means dragging downward — a
+    // gesture a 6-year-old has no way to discover, and the game promises no
+    // dead ends.
+    //
+    // So: while the child is pressing against something and going nowhere,
+    // grant enough authority to pivot out. It only engages when genuinely
+    // stuck, so it never turns into spin-on-the-spot during normal play.
+    if (this.#pushingTime > 0.35) {
+      authority = Math.max(authority, 0.45)
+    }
+
     const steerSense = this.speed < 0 ? -1 : 1
     this.heading += steer * steerSense * handling.steerRate * this.effects.grip * authority * dt
 
@@ -213,6 +237,15 @@ export class Vehicle3D {
 
     this.#resolveCollisions()
     this.#clampToBounds()
+
+    // Track "asking to move but going nowhere", which is what being wedged
+    // actually feels like from the controls' point of view.
+    const wantsToMove = throttle > 0.2 || brake > 0.2
+    if (wantsToMove && Math.abs(this.speed) < this.maxSpeed * 0.06) {
+      this.#pushingTime += dt
+    } else {
+      this.#pushingTime = 0
+    }
 
     // -- Visual state ---------------------------------------------------------
     // Pitch: nose dives under braking, lifts under acceleration.

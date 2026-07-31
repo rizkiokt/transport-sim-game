@@ -182,6 +182,53 @@ describe('Vehicle3D', () => {
     expect(Math.abs(car.heading - before)).toBeGreaterThan(0.4)
   })
 
+  it('can steer out of a building it is nosed into', () => {
+    // Regression test for a hard softlock. Steering authority is proportional
+    // to speed, and a head-on collision pins speed to ~0 — so holding the
+    // throttle and turning could not rotate the car AT ALL. The only escape
+    // was reverse, which on touch is a downward drag a 6-year-old has no way
+    // to discover. The game promises no dead ends, so this has to work.
+    const car = makeCar()
+
+    const nearby: Obstacle3D[] = []
+    city.obstacles.queryRadius(car.x, car.z, 60, nearby)
+    const wall = nearby.find((o) => o.kind === 'building')
+    expect(wall).toBeDefined()
+
+    // Drive squarely into the middle of a wall face and hold the throttle.
+    car.place(wall!.x - wall!.hw - 4, wall!.y, 0)
+    car.controls.throttle = 1
+    car.controls.steer = 0
+    step(car, 3)
+
+    // Confirm the setup: the car really is jammed and going nowhere.
+    expect(Math.abs(car.speed)).toBeLessThan(car.maxSpeed * 0.1)
+    const headingWhenStuck = car.heading
+
+    // Now the child turns the wheel, still holding go.
+    car.controls.steer = 1
+    step(car, 2)
+
+    // It must have turned enough to drive away along the wall.
+    expect(Math.abs(car.heading - headingWhenStuck)).toBeGreaterThan(0.5)
+
+    // And then actually escape.
+    step(car, 3)
+    expect(Math.abs(car.speed)).toBeGreaterThan(car.maxSpeed * 0.2)
+  })
+
+  it('does not let the unstick aid become spin-on-the-spot', () => {
+    // The aid must only engage when genuinely wedged. In open road with no
+    // obstacle, a stationary car holding full lock must still not pirouette.
+    const car = makeCar()
+    const before = car.heading
+    car.controls.throttle = 0
+    car.controls.brake = 0
+    car.controls.steer = 1
+    step(car, 3)
+    expect(Math.abs(car.heading - before)).toBeLessThan(0.05)
+  })
+
   it('produces finite state under sustained random input', () => {
     const car = makeCar()
     let seed = 3
