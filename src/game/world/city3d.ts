@@ -22,7 +22,7 @@ import {
   InstancedMesh,
   Matrix4,
   Mesh,
-  MeshLambertMaterial,
+  MeshStandardMaterial,
   PlaneGeometry,
   Quaternion,
   Vector3,
@@ -35,9 +35,11 @@ import { SpatialHash } from '../../engine/spatial/spatial-hash.js'
 import {
   blobGeometry,
   coneCrownGeometry,
+  pitchedRoofGeometry,
   taperedBlockGeometry,
   trunkGeometry,
 } from '../../engine/three/geometry.js'
+import { applyFacadeWindows } from './facade-material.js'
 import { RoadNetwork } from './road-network.js'
 
 /**
@@ -89,6 +91,15 @@ interface BuildingPlacement {
   height: number
   color: Color
   rotation: number
+  /**
+   * Silhouette archetype. A town where every building is one extruded box
+   * reads as a bar chart; varying the top is what makes a skyline.
+   */
+  form: 'flat' | 'setback' | 'pitched'
+  /** Fraction of total height the lower volume occupies, for 'setback'. */
+  setbackRatio: number
+  /** Inset of the upper volume, as a fraction of footprint. */
+  setbackInset: number
 }
 
 interface TreePlacement {
@@ -157,7 +168,19 @@ export function generateCity3D(seed: number | string): City3D {
             const w = blockRng.range(lot * 0.5, lot * 0.78)
             const d = blockRng.range(lot * 0.5, lot * 0.78)
             // Height in world units directly — 2 to 6 storeys.
-            const storeys = blockRng.int(2, 6)
+            const storeys = blockRng.int(2, 7)
+            // Short buildings get pitched roofs and read as houses; tall ones
+            // step back like offices. Mixing the two is what stops a street
+            // looking like a row of identical extrusions.
+            const form =
+              storeys <= 3
+                ? blockRng.chance(0.7)
+                  ? 'pitched'
+                  : 'flat'
+                : blockRng.chance(0.45)
+                  ? 'setback'
+                  : 'flat'
+
             buildings.push({
               x: (lotX + lot / 2) * WORLD_SCALE,
               z: (lotZ + lot / 2) * WORLD_SCALE,
@@ -167,6 +190,9 @@ export function generateCity3D(seed: number | string): City3D {
               color: new Color(blockRng.pick(BUILDING_COLORS)),
               // Only right angles: a town of skewed buildings looks broken.
               rotation: blockRng.int(0, 3) * (Math.PI / 2),
+              form,
+              setbackRatio: blockRng.range(0.55, 0.72),
+              setbackInset: blockRng.range(0.16, 0.3),
             })
           } else {
             const count = blockRng.int(1, 3)
@@ -260,7 +286,7 @@ export function generateCity3D(seed: number | string): City3D {
 
   // Generously oversized so the horizon is grass, never void.
   const groundGeo = new PlaneGeometry((maxX - minX) * 3, (maxZ - minZ) * 3)
-  const groundMat = new MeshLambertMaterial({ color: 0x63a24f })
+  const groundMat = new MeshStandardMaterial({ color: 0x63a24f, roughness: 0.95, metalness: 0 })
   disposables.push(groundGeo, groundMat)
   const ground = new Mesh(groundGeo, groundMat)
   ground.rotation.x = -Math.PI / 2
@@ -269,9 +295,16 @@ export function generateCity3D(seed: number | string): City3D {
   root.add(ground)
 
   // -- Roads and kerbs ----------------------------------------------------
-  const roadMat = new MeshLambertMaterial({ color: 0x4a4e5a })
-  const kerbMat = new MeshLambertMaterial({ color: 0xcfc7b8 })
-  const lineMat = new MeshLambertMaterial({ color: 0xf2f2f2, side: DoubleSide })
+  // Asphalt is dark and fairly rough, but not matte — wet-look sheen at
+  // grazing angles is a big part of why a road reads as a road.
+  const roadMat = new MeshStandardMaterial({ color: 0x3f434e, roughness: 0.72, metalness: 0 })
+  const kerbMat = new MeshStandardMaterial({ color: 0xcdc6b6, roughness: 0.9, metalness: 0 })
+  const lineMat = new MeshStandardMaterial({
+    color: 0xf4f4f0,
+    roughness: 0.75,
+    metalness: 0,
+    side: DoubleSide,
+  })
   disposables.push(roadMat, kerbMat, lineMat)
 
   // One box per segment, but boxes share geometry via scale — cheap enough
@@ -338,46 +371,111 @@ export function generateCity3D(seed: number | string): City3D {
   }
 
   // -- Buildings ----------------------------------------------------------
+  // Drawn as three instanced passes rather than one, so the skyline has
+  // silhouette variety without giving up instancing: a main volume everyone
+  // shares, an upper volume only setback towers use, and a pitched roof only
+  // houses use. Three draw calls, ~100 buildings, many different shapes.
   if (buildings.length > 0) {
-    const buildingGeo = taperedBlockGeometry(1, 1, 1, 0.94, 0.06)
-    disposables.push(buildingGeo)
-    const buildingMat = new MeshLambertMaterial({ vertexColors: false })
-    disposables.push(buildingMat)
+    const bodyGeo = taperedBlockGeometry(1, 1, 1, 0.96, 0.05)
+    const capGeo = taperedBlockGeometry(1, 1, 1, 0.9, 0.07)
+    const roofGeo = pitchedRoofGeometry(1, 1, 1)
+    disposables.push(bodyGeo, capGeo, roofGeo)
 
-    const buildingMesh = new InstancedMesh(buildingGeo, buildingMat, buildings.length)
-    buildingMesh.castShadow = true
-    buildingMesh.receiveShadow = true
+    const wallMat = new MeshStandardMaterial({ roughness: 0.82, metalness: 0.02 })
+    applyFacadeWindows(wallMat)
+    const trimMat = new MeshStandardMaterial({ roughness: 0.88, metalness: 0.02 })
+    disposables.push(wallMat, trimMat)
 
-    const roofGeo = taperedBlockGeometry(1, 1, 1, 0.9, 0.08)
-    disposables.push(roofGeo)
-    const roofMat = new MeshLambertMaterial({})
-    disposables.push(roofMat)
-    const roofMesh = new InstancedMesh(roofGeo, roofMat, buildings.length)
+    const setbacks = buildings.filter((b) => b.form === 'setback')
+    const pitched = buildings.filter((b) => b.form === 'pitched')
+
+    // Main volume: every building has one, but a setback tower's is shorter.
+    const bodyMesh = new InstancedMesh(bodyGeo, wallMat, buildings.length)
+    bodyMesh.castShadow = true
+    bodyMesh.receiveShadow = true
+
+    // Upper volumes and cornices.
+    const capCount = buildings.length + setbacks.length
+    const capMesh = new InstancedMesh(capGeo, trimMat, capCount)
+    capMesh.castShadow = true
+
+    const roofMesh = new InstancedMesh(roofGeo, trimMat, Math.max(1, pitched.length))
     roofMesh.castShadow = true
+
+    let capIndex = 0
 
     buildings.forEach((b, i) => {
       quat.setFromAxisAngle(AXIS_Y, b.rotation)
 
-      pos.set(b.x, b.height / 2, b.z)
-      scl.set(b.width, b.height, b.depth)
-      matrix.compose(pos, quat, scl)
-      buildingMesh.setMatrixAt(i, matrix)
-      buildingMesh.setColorAt(i, b.color)
+      // How tall the main volume is depends on the archetype.
+      const bodyHeight =
+        b.form === 'setback' ? b.height * b.setbackRatio : b.form === 'pitched' ? b.height * 0.86 : b.height
 
-      // A slightly wider, short cap reads as a roof/parapet.
-      pos.set(b.x, b.height + 0.16, b.z)
-      scl.set(b.width * 0.98, 0.32, b.depth * 0.98)
+      pos.set(b.x, bodyHeight / 2, b.z)
+      scl.set(b.width, bodyHeight, b.depth)
       matrix.compose(pos, quat, scl)
-      roofMesh.setMatrixAt(i, matrix)
-      roofMesh.setColorAt(i, ROOF_COLOR_CACHE[i % ROOF_COLOR_CACHE.length]!)
+      bodyMesh.setMatrixAt(i, matrix)
+      bodyMesh.setColorAt(i, b.color)
+
+      if (b.form === 'setback') {
+        // A narrower upper tower, plus its own cornice.
+        const upperHeight = b.height - bodyHeight
+        const inset = 1 - b.setbackInset
+        pos.set(b.x, bodyHeight + upperHeight / 2, b.z)
+        scl.set(b.width * inset, upperHeight, b.depth * inset)
+        matrix.compose(pos, quat, scl)
+        capMesh.setMatrixAt(capIndex, matrix)
+        capMesh.setColorAt(capIndex, b.color)
+        capIndex++
+
+        // Ledge where the setback happens — the shadow line it casts is what
+        // makes the step read as architecture rather than a modelling seam.
+        pos.set(b.x, bodyHeight + 0.14, b.z)
+        scl.set(b.width * 1.04, 0.28, b.depth * 1.04)
+        matrix.compose(pos, quat, scl)
+        capMesh.setMatrixAt(capIndex, matrix)
+        capMesh.setColorAt(capIndex, ROOF_COLOR_CACHE[i % ROOF_COLOR_CACHE.length]!)
+        capIndex++
+      } else if (b.form === 'pitched') {
+        const roofHeight = b.height * 0.28
+        pos.set(b.x, bodyHeight, b.z)
+        scl.set(b.width * 1.07, roofHeight, b.depth * 1.07)
+        matrix.compose(pos, quat, scl)
+        roofMesh.setMatrixAt(pitched.indexOf(b), matrix)
+        roofMesh.setColorAt(pitched.indexOf(b), ROOF_COLOR_CACHE[i % ROOF_COLOR_CACHE.length]!)
+
+        // Eaves.
+        pos.set(b.x, bodyHeight - 0.06, b.z)
+        scl.set(b.width * 1.09, 0.14, b.depth * 1.09)
+        matrix.compose(pos, quat, scl)
+        capMesh.setMatrixAt(capIndex, matrix)
+        capMesh.setColorAt(capIndex, ROOF_COLOR_CACHE[i % ROOF_COLOR_CACHE.length]!)
+        capIndex++
+      } else {
+        // A flat roof needs a parapet or it looks like a cut-off extrusion.
+        pos.set(b.x, b.height + 0.16, b.z)
+        scl.set(b.width * 1.03, 0.32, b.depth * 1.03)
+        matrix.compose(pos, quat, scl)
+        capMesh.setMatrixAt(capIndex, matrix)
+        capMesh.setColorAt(capIndex, ROOF_COLOR_CACHE[i % ROOF_COLOR_CACHE.length]!)
+        capIndex++
+      }
     })
 
-    buildingMesh.instanceMatrix.needsUpdate = true
+    // Unused instances would otherwise render as unit cubes at the origin.
+    capMesh.count = capIndex
+    roofMesh.count = pitched.length
+
+    bodyMesh.instanceMatrix.needsUpdate = true
+    capMesh.instanceMatrix.needsUpdate = true
     roofMesh.instanceMatrix.needsUpdate = true
-    if (buildingMesh.instanceColor) buildingMesh.instanceColor.needsUpdate = true
+    if (bodyMesh.instanceColor) bodyMesh.instanceColor.needsUpdate = true
+    if (capMesh.instanceColor) capMesh.instanceColor.needsUpdate = true
     if (roofMesh.instanceColor) roofMesh.instanceColor.needsUpdate = true
     quat.identity()
-    root.add(buildingMesh, roofMesh)
+
+    root.add(bodyMesh, capMesh)
+    if (pitched.length > 0) root.add(roofMesh)
   }
 
   // -- Trees ---------------------------------------------------------------
@@ -387,8 +485,8 @@ export function generateCity3D(seed: number | string): City3D {
     const coneGeo = coneCrownGeometry(0.6, 1.6, 9)
     disposables.push(trunkGeo, blobGeo, coneGeo)
 
-    const trunkMat = new MeshLambertMaterial({ color: 0x7a5230 })
-    const foliageMat = new MeshLambertMaterial({})
+    const trunkMat = new MeshStandardMaterial({ color: 0x6f4a2c, roughness: 0.95, metalness: 0 })
+    const foliageMat = new MeshStandardMaterial({ roughness: 0.9, metalness: 0 })
     disposables.push(trunkMat, foliageMat)
 
     const trunkMesh = new InstancedMesh(trunkGeo, trunkMat, trees.length)

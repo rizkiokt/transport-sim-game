@@ -98,11 +98,12 @@ export class TownScene3D {
     this.scene.add(this.#city.root)
 
     const profile = RENDER_PROFILES[deps.renderer.tier]
-    this.#environment = new Environment(this.scene, {
+    this.#environment = new Environment(this.scene, deps.renderer.renderer, {
       shadowMapSize: profile.shadowMapSize,
       fogNear: profile.drawDistance * 0.35,
       fogFar: profile.drawDistance * 0.95,
     })
+    this.#environment.setEnvironmentEnabled(profile.environmentLighting)
 
     // -- Car -------------------------------------------------------------
     const def = getVehicle(this.#save.activeVehicle)

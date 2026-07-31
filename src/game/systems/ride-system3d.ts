@@ -26,7 +26,7 @@ import {
   type Material,
 } from 'three'
 
-import { clamp, lerp } from '../../engine/math/scalar.js'
+import { clamp, dampAngle, lerp } from '../../engine/math/scalar.js'
 import { cosmeticRng } from '../../engine/math/rng.js'
 import { outQuad, pulse } from '../../engine/anim/easing.js'
 import { createCharacter, disposeCharacter, type CharacterParts } from '../art/character-model.js'
@@ -160,8 +160,19 @@ export class RideSystem3D {
         this.targetZ = this.#passengerZ
         this.hasTarget = true
 
-        const dist = Math.hypot(car.x - this.#passengerX, car.z - this.#passengerZ)
+        const dx = car.x - this.#passengerX
+        const dz = car.z - this.#passengerZ
+        const dist = Math.hypot(dx, dz)
         this.#animateWaiting(dist)
+
+        // Turn to watch the car. A passenger who stares rigidly ahead while
+        // you drive round them reads as a prop; one who tracks you reads as a
+        // person waiting for a lift. Characters are modelled facing +X, and
+        // Three's Y rotation runs the other way, hence the negation.
+        if (dist > 0.01) {
+          const c = this.#character
+          if (c) c.root.rotation.y = dampAngle(c.root.rotation.y, -Math.atan2(dz, dx), 0.02, dt)
+        }
 
         if (dist < PICKUP_RADIUS) {
           this.phase = 'boarding'
@@ -230,8 +241,6 @@ export class RideSystem3D {
     const hop = Math.abs(Math.sin(this.#time * (3 + excitement * 5)))
     c.body.position.y = hop * (0.04 + excitement * 0.12)
     c.arm.rotation.z = -0.5 - Math.sin(this.#time * 9) * 0.85 * excitement
-    // Face the car so the wave reads as directed at the player.
-    c.root.rotation.y = lerp(c.root.rotation.y, c.root.rotation.y, 1)
   }
 
   #animateBoarding(car: Vehicle3D): void {

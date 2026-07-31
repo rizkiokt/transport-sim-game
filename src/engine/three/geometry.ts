@@ -12,6 +12,7 @@
  */
 
 import {
+  BufferAttribute,
   BufferGeometry,
   CapsuleGeometry,
   CylinderGeometry,
@@ -172,8 +173,60 @@ export function wheelGeometry(radius: number, width: number, segments = 16): Buf
   points.push(new Vector2(0, width / 2))
 
   const geometry = new LatheGeometry(points, segments)
-  // Lathe spins around Y; a wheel spins around X.
-  geometry.rotateZ(Math.PI / 2)
+  // LatheGeometry spins the profile around Y, so the axle starts along Y.
+  // The car travels along +X, so a wheel's axle must lie along Z — rotating
+  // about X maps Y onto Z. (Rotating about Z instead would put the axle along
+  // the direction of travel, and the "wheels" would tumble rather than roll.)
+  geometry.rotateX(Math.PI / 2)
+  geometry.computeVertexNormals()
+  return geometry
+}
+
+/**
+ * A pitched (gable) roof: a ridge running along X, sloping down to the eaves
+ * on both Z sides. Sits with its base at y=0 so it can be dropped straight
+ * onto the top of a building.
+ *
+ * Built by hand rather than from a primitive because no Three primitive is a
+ * gable, and a rotated box gives the wrong overhang at the ends.
+ */
+export function pitchedRoofGeometry(width: number, height: number, depth: number): BufferGeometry {
+  const hw = width / 2
+  const hd = depth / 2
+
+  // Ridge is inset slightly along X so the gable ends are not knife-edged.
+  const ridgeInset = hw * 0.04
+
+  const positions = new Float32Array([
+    // Front slope (+Z), two triangles up to the ridge.
+    -hw, 0, hd, hw, 0, hd, hw - ridgeInset, height, 0,
+    -hw, 0, hd, hw - ridgeInset, height, 0, -hw + ridgeInset, height, 0,
+    // Back slope (-Z).
+    hw, 0, -hd, -hw, 0, -hd, -hw + ridgeInset, height, 0,
+    hw, 0, -hd, -hw + ridgeInset, height, 0, hw - ridgeInset, height, 0,
+    // Gable end (+X).
+    hw, 0, hd, hw, 0, -hd, hw - ridgeInset, height, 0,
+    // Gable end (-X).
+    -hw, 0, -hd, -hw, 0, hd, -hw + ridgeInset, height, 0,
+    // Underside, so the roof is watertight when seen from below a hill.
+    -hw, 0, -hd, hw, 0, -hd, hw, 0, hd,
+    -hw, 0, -hd, hw, 0, hd, -hw, 0, hd,
+  ])
+
+  const geometry = new BufferGeometry()
+  geometry.setAttribute('position', new BufferAttribute(positions, 3))
+  geometry.computeVertexNormals()
+  return geometry
+}
+
+/**
+ * A disc lying in the XY plane with its axis along Z — the orientation a
+ * wheel hub needs, matching {@link wheelGeometry}.
+ */
+export function discGeometry(radius: number, thickness: number, segments = 16): BufferGeometry {
+  const geometry = new CylinderGeometry(radius, radius, thickness, segments)
+  // CylinderGeometry's axis is Y; rotate it onto Z to match the wheel.
+  geometry.rotateX(Math.PI / 2)
   geometry.computeVertexNormals()
   return geometry
 }

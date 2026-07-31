@@ -24,7 +24,10 @@ import {
   HemisphereLight,
   Scene,
   type Object3D,
+  type WebGLRenderer,
 } from 'three'
+
+import { createSky, type SkyResult } from './sky.js'
 
 export interface EnvironmentOptions {
   /** Sky and fog colour. */
@@ -48,11 +51,23 @@ export class Environment {
 
   #shadowRadius: number
 
-  constructor(scene: Scene, options: EnvironmentOptions = {}) {
+  #sky: SkyResult | null = null
+
+  constructor(scene: Scene, renderer: WebGLRenderer, options: EnvironmentOptions = {}) {
     this.scene = scene
 
-    const sky = new Color(options.skyColor ?? 0x8fd0f0)
-    scene.background = sky
+    // A gradient sky plus the environment map derived from it. The map is
+    // what gives every reflective surface — paint, chrome, glass — something
+    // to reflect; without it they read as flat plastic.
+    this.#sky = createSky(renderer, {
+      zenith: '#3f96de',
+      horizon: '#cfeafb',
+      ground: '#5f8f4e',
+    })
+    scene.background = this.#sky.background
+    scene.environment = this.#sky.environment
+
+    const sky = new Color(options.skyColor ?? 0xa8dcf3)
     scene.fog = new Fog(sky.getHex(), options.fogNear ?? 70, options.fogFar ?? 210)
 
     this.hemisphere = new HemisphereLight(
@@ -77,6 +92,23 @@ export class Environment {
 
     this.#shadowRadius = options.shadowRadius ?? 26
     this.setShadowMapSize(options.shadowMapSize ?? 2048)
+  }
+
+  /**
+   * Turn image-based lighting on or off.
+   *
+   * The environment map is what makes paint and chrome look like real
+   * materials, but sampling a pre-filtered cube map per fragment is a genuine
+   * cost on a weak mobile GPU. Dropping it on the low tier keeps the same
+   * geometry and lighting while removing that per-pixel work — surfaces go
+   * flatter, but the game stays smooth, which matters more.
+   */
+  setEnvironmentEnabled(enabled: boolean): void {
+    this.scene.environment = enabled ? (this.#sky?.environment ?? null) : null
+    // Without IBL the scene loses its ambient fill, so compensate to stop
+    // everything sinking into gloom.
+    this.ambient.intensity = enabled ? 0.22 : 0.5
+    this.hemisphere.intensity = enabled ? 1.05 : 1.35
   }
 
   /** Resize or disable the shadow map. 0 turns shadows off entirely. */
@@ -138,6 +170,10 @@ export class Environment {
   }
 
   dispose(): void {
+    this.#sky?.dispose()
+    this.#sky = null
+    this.scene.background = null
+    this.scene.environment = null
     this.sun.shadow.map?.dispose()
     this.scene.remove(this.sun, this.sun.target, this.hemisphere, this.ambient)
     this.sun.dispose()

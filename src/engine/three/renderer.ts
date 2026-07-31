@@ -31,12 +31,35 @@ export interface RenderQualityProfile {
   antialias: boolean
   /** How far the camera can see, in world units. Shorter = fewer draws. */
   drawDistance: number
+  /**
+   * Image-based lighting from the sky environment map. Off on low-end: it is
+   * per-fragment work that a weak mobile GPU feels immediately.
+   */
+  environmentLighting: boolean
 }
 
 export const RENDER_PROFILES: Record<QualityTier, RenderQualityProfile> = {
-  low: { maxPixelRatio: 1, shadowMapSize: 0, antialias: false, drawDistance: 190 },
-  medium: { maxPixelRatio: 1.4, shadowMapSize: 1024, antialias: false, drawDistance: 260 },
-  high: { maxPixelRatio: 2, shadowMapSize: 2048, antialias: true, drawDistance: 340 },
+  low: {
+    maxPixelRatio: 1,
+    shadowMapSize: 0,
+    antialias: false,
+    drawDistance: 190,
+    environmentLighting: false,
+  },
+  medium: {
+    maxPixelRatio: 1.4,
+    shadowMapSize: 1024,
+    antialias: false,
+    drawDistance: 260,
+    environmentLighting: true,
+  },
+  high: {
+    maxPixelRatio: 2,
+    shadowMapSize: 2048,
+    antialias: true,
+    drawDistance: 340,
+    environmentLighting: true,
+  },
 }
 
 export interface RendererOptions {
