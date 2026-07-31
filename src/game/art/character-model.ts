@@ -42,6 +42,107 @@ const SHOE_COLORS = [0xf0f0f0, 0xe84a4a, 0x2f3540, 0x8a5a2b, 0x3f8ee8]
 
 export type HairStyle = 'short' | 'bob' | 'bun' | 'cap' | 'curly'
 
+/**
+ * Geometry and materials shared by every character.
+ *
+ * Characters used to build ~25 geometries each, every spawn. Measured at
+ * ~2ms on a desktop, which is ~8ms on a tablet — half a frame budget, and a
+ * visible hitch every time a passenger appeared.
+ *
+ * Every character is the same set of shapes; only overall height, head scale
+ * and colours differ. So the shapes are built ONCE at a canonical height of
+ * 1.0 and scaled per instance, and materials are interned by colour. Spawning
+ * is then just creating Mesh objects, which is cheap.
+ *
+ * The trade-off is ownership: these outlive any single character, so
+ * `disposeCharacter` must not free them. `disposeCharacterAssets` does, for
+ * teardown.
+ */
+interface CharacterAssets {
+  leg: BufferGeometry
+  shoe: BufferGeometry
+  torso: BufferGeometry
+  hips: BufferGeometry
+  neck: BufferGeometry
+  head: BufferGeometry
+  eye: BufferGeometry
+  mouth: BufferGeometry
+  collar: BufferGeometry
+  sleeve: BufferGeometry
+  forearm: BufferGeometry
+  hand: BufferGeometry
+  hairShort: BufferGeometry
+  hairBob: BufferGeometry
+  hairFace: BufferGeometry
+  hairCap: BufferGeometry
+  hairBun: BufferGeometry
+  hairCrown: BufferGeometry
+  hairPeak: BufferGeometry
+  hairCurl: BufferGeometry
+}
+
+/** Canonical height everything is authored at; instances scale from this. */
+const BASE_H = 1
+
+let assets: CharacterAssets | null = null
+const materialCache = new Map<string, MeshStandardMaterial>()
+
+function getAssets(): CharacterAssets {
+  if (assets) return assets
+
+  const H = BASE_H
+  const legLength = H * 0.34
+  const torsoHeight = H * 0.3
+  const shoulderWidth = H * 0.26
+  const headRadius = H * 0.115
+  const hairSeed = (i: number): number => ((i * 37) % 13) / 13
+
+  assets = {
+    leg: capsuleGeometry(H * 0.045, legLength * 0.62, 6),
+    shoe: roundedBoxGeometry(H * 0.1, H * 0.038, H * 0.075, H * 0.018),
+    torso: roundedBoxGeometry(H * 0.13, torsoHeight, shoulderWidth, H * 0.055),
+    hips: roundedBoxGeometry(H * 0.12, torsoHeight * 0.3, shoulderWidth * 0.82, H * 0.045),
+    neck: capsuleGeometry(H * 0.028, H * 0.03, 6),
+    head: headGeometry(headRadius, 1.06, 16),
+    eye: headGeometry(headRadius * 0.19, 1, 10),
+    mouth: roundedBoxGeometry(headRadius * 0.1, headRadius * 0.07, headRadius * 0.34, headRadius * 0.03),
+    collar: roundedBoxGeometry(H * 0.135, H * 0.03, shoulderWidth * 1.02, H * 0.014),
+    sleeve: capsuleGeometry(H * 0.038, torsoHeight * 0.26, 6),
+    forearm: capsuleGeometry(H * 0.032, torsoHeight * 0.28, 6),
+    hand: headGeometry(H * 0.042, 1, 8),
+    hairShort: headGeometry(headRadius * 1.05, 0.78, 14),
+    hairBob: headGeometry(headRadius * 1.12, 1.0, 14),
+    hairFace: headGeometry(headRadius * 0.96, 1.02, 14),
+    hairCap: headGeometry(headRadius * 1.05, 0.8, 14),
+    hairBun: blobGeometry(headRadius * 0.42, 1, 0.1, hairSeed),
+    hairCrown: headGeometry(headRadius * 1.07, 0.72, 14),
+    hairPeak: roundedBoxGeometry(headRadius * 0.9, headRadius * 0.12, headRadius * 1.4, headRadius * 0.05),
+    hairCurl: blobGeometry(headRadius * 0.36, 0, 0.25, hairSeed),
+  }
+  return assets
+}
+
+/** Materials are interned by colour: the palettes are small and fixed. */
+function getMaterial(color: number, roughness: number): MeshStandardMaterial {
+  const key = `${color}:${roughness}`
+  let mat = materialCache.get(key)
+  if (!mat) {
+    mat = new MeshStandardMaterial({ color, roughness, metalness: 0 })
+    materialCache.set(key, mat)
+  }
+  return mat
+}
+
+/** Free the shared pool. Only for full teardown, never per character. */
+export function disposeCharacterAssets(): void {
+  if (assets) {
+    for (const geo of Object.values(assets)) geo.dispose()
+    assets = null
+  }
+  for (const mat of materialCache.values()) mat.dispose()
+  materialCache.clear()
+}
+
 export interface CharacterParts {
   root: Group
   /** Bobs and hops without moving the shadow. */
@@ -58,65 +159,59 @@ export const CHARACTER_HEIGHT = 1.15
 
 export function createCharacter(seed: number | string): CharacterParts {
   const rng = createRng(`character3d:${seed}`)
-  const disposables: Array<BufferGeometry | Material> = []
+  const g = getAssets()
 
   // Children are shorter AND proportionally bigger-headed; varying both at
   // once is what makes a crowd read as a mix of ages rather than one model at
   // different scales.
   const childness = rng.next() < 0.32 ? rng.range(0.55, 0.85) : 1
-  const H = CHARACTER_HEIGHT * rng.range(0.94, 1.06) * childness
+  const heightScale = CHARACTER_HEIGHT * rng.range(0.94, 1.06) * childness
   const headScale = 1 + (1 - childness) * 0.5
 
-  const skin = rng.pick(SKIN_TONES)
-  const top = rng.pick(TOP_COLORS)
-  const trousers = rng.pick(TROUSER_COLORS)
-  const hairColor = rng.pick(HAIR_COLORS)
-  const shoeColor = rng.pick(SHOE_COLORS)
+  const skinMat = getMaterial(rng.pick(SKIN_TONES), 0.75)
+  const topMat = getMaterial(rng.pick(TOP_COLORS), 0.82)
+  const trouserMat = getMaterial(rng.pick(TROUSER_COLORS), 0.85)
+  const hairMat = getMaterial(rng.pick(HAIR_COLORS), 0.7)
+  const shoeMat = getMaterial(rng.pick(SHOE_COLORS), 0.6)
+  const eyeMat = getMaterial(0x1a1a22, 0.4)
   const hairStyle = rng.pick(['short', 'bob', 'bun', 'cap', 'curly'] as const) as HairStyle
 
-  const skinMat = new MeshStandardMaterial({ color: skin, roughness: 0.75, metalness: 0 })
-  const topMat = new MeshStandardMaterial({ color: top, roughness: 0.82, metalness: 0 })
-  const trouserMat = new MeshStandardMaterial({ color: trousers, roughness: 0.85, metalness: 0 })
-  const hairMat = new MeshStandardMaterial({ color: hairColor, roughness: 0.7, metalness: 0 })
-  const shoeMat = new MeshStandardMaterial({ color: shoeColor, roughness: 0.6, metalness: 0 })
-  const eyeMat = new MeshStandardMaterial({ color: 0x1a1a22, roughness: 0.4, metalness: 0 })
-  disposables.push(skinMat, topMat, trouserMat, hairMat, shoeMat, eyeMat)
-
   const root = new Group()
+  // Everything is authored at BASE_H and scaled here, so the geometry can be
+  // shared across every character regardless of their height.
+  root.scale.setScalar(heightScale)
+
   const body = new Group()
   root.add(body)
 
-  // -- Proportions ---------------------------------------------------------
+  // -- Proportions, at the canonical height ---------------------------------
+  const H = BASE_H
   const legLength = H * 0.34
   const torsoHeight = H * 0.3
   const shoulderWidth = H * 0.26
-  const waistWidth = shoulderWidth * 0.82
-  const headRadius = H * 0.115 * headScale
+  const headRadius = H * 0.115
 
   const hipY = legLength
   const torsoY = hipY + torsoHeight / 2
   const shoulderY = hipY + torsoHeight
-  const headY = shoulderY + headRadius * 0.95
+  // The head group is scaled separately, so its offset has to account for that.
+  const headY = shoulderY + headRadius * 0.95 * headScale
 
-  // -- Legs ----------------------------------------------------------------
+  // -- Legs ------------------------------------------------------------------
   // Two separate legs with a visible gap. A single column reads as a skittle.
-  const legGeo = capsuleGeometry(H * 0.045, legLength * 0.62, 6)
-  const shoeGeo = roundedBoxGeometry(H * 0.1, H * 0.038, H * 0.075, H * 0.018)
-  disposables.push(legGeo, shoeGeo)
-
   const legs: Group[] = []
   for (const side of [-1, 1]) {
     const leg = new Group()
     leg.position.set(0, hipY, side * shoulderWidth * 0.24)
     body.add(leg)
 
-    const legMesh = new Mesh(legGeo, trouserMat)
+    const legMesh = new Mesh(g.leg, trouserMat)
     legMesh.position.y = -legLength * 0.44
     legMesh.castShadow = true
     leg.add(legMesh)
 
     // Feet stop the figure looking like it is floating.
-    const shoe = new Mesh(shoeGeo, shoeMat)
+    const shoe = new Mesh(g.shoe, shoeMat)
     shoe.position.set(H * 0.018, -legLength + H * 0.019, 0)
     shoe.castShadow = true
     leg.add(shoe)
@@ -124,196 +219,154 @@ export function createCharacter(seed: number | string): CharacterParts {
     legs.push(leg)
   }
 
-  // -- Torso ---------------------------------------------------------------
+  // -- Torso -------------------------------------------------------------------
   // Tapered: shoulders wider than waist. This single cue does more for
   // "person" than any amount of detail elsewhere.
-  const torsoGeo = roundedBoxGeometry(H * 0.13, torsoHeight, shoulderWidth, H * 0.055)
-  disposables.push(torsoGeo)
-  const torso = new Mesh(torsoGeo, topMat)
+  const torso = new Mesh(g.torso, topMat)
   torso.position.y = torsoY
   torso.castShadow = true
   body.add(torso)
 
-  const hipGeo = roundedBoxGeometry(H * 0.12, torsoHeight * 0.3, waistWidth, H * 0.045)
-  disposables.push(hipGeo)
-  const hips = new Mesh(hipGeo, trouserMat)
+  const hips = new Mesh(g.hips, trouserMat)
   hips.position.y = hipY + torsoHeight * 0.12
   hips.castShadow = true
   body.add(hips)
 
-  // -- Neck and head --------------------------------------------------------
-  const neckGeo = capsuleGeometry(H * 0.028, H * 0.03, 6)
-  disposables.push(neckGeo)
-  const neck = new Mesh(neckGeo, skinMat)
+  const collar = new Mesh(g.collar, topMat)
+  collar.position.y = shoulderY - H * 0.012
+  body.add(collar)
+
+  const neck = new Mesh(g.neck, skinMat)
   neck.position.y = shoulderY + H * 0.012
   body.add(neck)
 
-  const headGeo = headGeometry(headRadius, 1.06, 16)
-  disposables.push(headGeo)
-  const head = new Mesh(headGeo, skinMat)
-  head.position.y = headY
+  // -- Head ---------------------------------------------------------------------
+  // Its own group so head scale can vary without needing separate geometry.
+  const headGroup = new Group()
+  headGroup.position.y = headY
+  headGroup.scale.setScalar(headScale)
+  body.add(headGroup)
+
+  const head = new Mesh(g.head, skinMat)
   head.castShadow = true
-  body.add(head)
+  headGroup.add(head)
 
   // Eyes and mouth on the +X face; characters face +X, like the car. These
   // are deliberately oversized — at gameplay distance a realistically-scaled
   // eye is a single dark pixel, and a face with no readable features makes a
   // figure look eerie rather than friendly.
-  const eyeGeo = headGeometry(headRadius * 0.19, 1, 10)
-  disposables.push(eyeGeo)
   for (const side of [-1, 1]) {
-    const eye = new Mesh(eyeGeo, eyeMat)
-    eye.position.set(headRadius * 0.88, headY + headRadius * 0.12, side * headRadius * 0.36)
+    const eye = new Mesh(g.eye, eyeMat)
+    eye.position.set(headRadius * 0.88, headRadius * 0.12, side * headRadius * 0.36)
     eye.scale.x = 0.6
-    body.add(eye)
+    headGroup.add(eye)
   }
 
-  const mouthGeo = roundedBoxGeometry(headRadius * 0.1, headRadius * 0.07, headRadius * 0.34, headRadius * 0.03)
-  disposables.push(mouthGeo)
-  const mouth = new Mesh(mouthGeo, eyeMat)
-  mouth.position.set(headRadius * 0.9, headY - headRadius * 0.3, 0)
-  body.add(mouth)
+  const mouth = new Mesh(g.mouth, eyeMat)
+  mouth.position.set(headRadius * 0.9, -headRadius * 0.3, 0)
+  headGroup.add(mouth)
 
-  // -- Hair ------------------------------------------------------------------
-  const hairSeed = (i: number): number => ((i * 37) % 13) / 13
+  // -- Hair ------------------------------------------------------------------------
   switch (hairStyle) {
     case 'short': {
-      const geo = headGeometry(headRadius * 1.05, 0.78, 14)
-      disposables.push(geo)
-      const hair = new Mesh(geo, hairMat)
-      hair.position.y = headY + headRadius * 0.24
+      const hair = new Mesh(g.hairShort, hairMat)
+      hair.position.y = headRadius * 0.24
       hair.castShadow = true
-      body.add(hair)
+      headGroup.add(hair)
       break
     }
     case 'bob': {
-      const geo = headGeometry(headRadius * 1.12, 1.0, 14)
-      disposables.push(geo)
-      const hair = new Mesh(geo, hairMat)
-      hair.position.set(-headRadius * 0.1, headY + headRadius * 0.12, 0)
+      const hair = new Mesh(g.hairBob, hairMat)
+      hair.position.set(-headRadius * 0.1, headRadius * 0.12, 0)
       hair.scale.y = 0.92
       hair.castShadow = true
-      body.add(hair)
+      headGroup.add(hair)
       // Carve the face back out with a skin-coloured front.
-      const faceGeo = headGeometry(headRadius * 0.96, 1.02, 14)
-      disposables.push(faceGeo)
-      const face = new Mesh(faceGeo, skinMat)
-      face.position.set(headRadius * 0.16, headY, 0)
-      body.add(face)
+      const face = new Mesh(g.hairFace, skinMat)
+      face.position.set(headRadius * 0.16, 0, 0)
+      headGroup.add(face)
       break
     }
     case 'bun': {
-      const capGeo = headGeometry(headRadius * 1.05, 0.8, 14)
-      disposables.push(capGeo)
-      const cap = new Mesh(capGeo, hairMat)
-      cap.position.y = headY + headRadius * 0.22
-      body.add(cap)
+      const cap = new Mesh(g.hairCap, hairMat)
+      cap.position.y = headRadius * 0.22
+      headGroup.add(cap)
 
-      const bunGeo = blobGeometry(headRadius * 0.42, 1, 0.1, hairSeed)
-      disposables.push(bunGeo)
-      const bun = new Mesh(bunGeo, hairMat)
-      bun.position.set(-headRadius * 0.75, headY + headRadius * 0.55, 0)
+      const bun = new Mesh(g.hairBun, hairMat)
+      bun.position.set(-headRadius * 0.75, headRadius * 0.55, 0)
       bun.castShadow = true
-      body.add(bun)
+      headGroup.add(bun)
       break
     }
     case 'cap': {
-      const crownGeo = headGeometry(headRadius * 1.07, 0.72, 14)
-      disposables.push(crownGeo)
-      const crown = new Mesh(crownGeo, hairMat)
-      crown.position.y = headY + headRadius * 0.28
+      const crown = new Mesh(g.hairCrown, hairMat)
+      crown.position.y = headRadius * 0.28
       crown.castShadow = true
-      body.add(crown)
+      headGroup.add(crown)
 
-      const peakGeo = roundedBoxGeometry(
-        headRadius * 0.9,
-        headRadius * 0.12,
-        headRadius * 1.4,
-        headRadius * 0.05,
-      )
-      disposables.push(peakGeo)
-      const peak = new Mesh(peakGeo, hairMat)
-      peak.position.set(headRadius * 0.95, headY + headRadius * 0.3, 0)
-      body.add(peak)
+      const peak = new Mesh(g.hairPeak, hairMat)
+      peak.position.set(headRadius * 0.95, headRadius * 0.3, 0)
+      headGroup.add(peak)
       break
     }
     case 'curly': {
-      const curlGeo = blobGeometry(headRadius * 0.36, 0, 0.25, hairSeed)
-      disposables.push(curlGeo)
       for (let i = 0; i < 7; i++) {
         const a = (i / 7) * Math.PI * 2
-        const curl = new Mesh(curlGeo, hairMat)
+        const curl = new Mesh(g.hairCurl, hairMat)
         curl.position.set(
           Math.cos(a) * headRadius * 0.62 - headRadius * 0.1,
-          headY + headRadius * 0.5,
+          headRadius * 0.5,
           Math.sin(a) * headRadius * 0.62,
         )
-        body.add(curl)
+        headGroup.add(curl)
       }
       break
     }
   }
 
-  // -- Arms --------------------------------------------------------------------
+  // -- Arms ----------------------------------------------------------------------------
   // Held slightly away from the body so there is daylight between arm and
-  // torso — without that gap the silhouette fuses into one blob.
-  // Upper arm in the shirt colour, forearm in skin: one extra mesh per arm,
-  // and the figure stops reading as a single moulded colour.
-  const sleeveGeo = capsuleGeometry(H * 0.038, torsoHeight * 0.26, 6)
-  const forearmGeo = capsuleGeometry(H * 0.032, torsoHeight * 0.28, 6)
-  const handGeo = headGeometry(H * 0.042, 1, 8)
-  disposables.push(sleeveGeo, forearmGeo, handGeo)
+  // torso — without that gap the silhouette fuses into one blob. Upper arm in
+  // the shirt colour, forearm in skin, so the figure reads as dressed.
+  const buildArm = (z: number, rotX: number): Group => {
+    const arm = new Group()
+    arm.position.set(0, shoulderY - H * 0.02, z)
+    arm.rotation.x = rotX
+    body.add(arm)
 
-  // A collar band where the neck meets the shirt.
-  const collarGeo = roundedBoxGeometry(H * 0.135, H * 0.03, shoulderWidth * 1.02, H * 0.014)
-  disposables.push(collarGeo)
-  const collar = new Mesh(collarGeo, topMat)
-  collar.position.y = shoulderY - H * 0.012
-  body.add(collar)
+    const sleeve = new Mesh(g.sleeve, topMat)
+    sleeve.position.y = -torsoHeight * 0.2
+    sleeve.castShadow = true
+    arm.add(sleeve)
 
-  // The waving arm gets its own pivot at the shoulder.
-  const arm = new Group()
-  arm.position.set(0, shoulderY - H * 0.02, -shoulderWidth * 0.55)
-  body.add(arm)
+    const forearm = new Mesh(g.forearm, skinMat)
+    forearm.position.y = -torsoHeight * 0.5
+    forearm.castShadow = true
+    arm.add(forearm)
 
-  const sleeve = new Mesh(sleeveGeo, topMat)
-  sleeve.position.y = -torsoHeight * 0.2
-  sleeve.castShadow = true
-  arm.add(sleeve)
+    const hand = new Mesh(g.hand, skinMat)
+    hand.position.y = -torsoHeight * 0.68
+    arm.add(hand)
 
-  const forearm = new Mesh(forearmGeo, skinMat)
-  forearm.position.y = -torsoHeight * 0.5
-  forearm.castShadow = true
-  arm.add(forearm)
+    return arm
+  }
 
-  const hand = new Mesh(handGeo, skinMat)
-  hand.position.y = -torsoHeight * 0.68
-  arm.add(hand)
+  const arm = buildArm(-shoulderWidth * 0.55, 0)
+  buildArm(shoulderWidth * 0.55, -0.14)
 
-  // The resting arm.
-  const stillArm = new Group()
-  stillArm.position.set(0, shoulderY - H * 0.02, shoulderWidth * 0.55)
-  stillArm.rotation.x = -0.14
-  body.add(stillArm)
-
-  const stillSleeve = new Mesh(sleeveGeo, topMat)
-  stillSleeve.position.y = -torsoHeight * 0.2
-  stillSleeve.castShadow = true
-  stillArm.add(stillSleeve)
-
-  const stillForearm = new Mesh(forearmGeo, skinMat)
-  stillForearm.position.y = -torsoHeight * 0.5
-  stillForearm.castShadow = true
-  stillArm.add(stillForearm)
-
-  const stillHand = new Mesh(handGeo, skinMat)
-  stillHand.position.y = -torsoHeight * 0.68
-  stillArm.add(stillHand)
-
-  return { root, body, arm, legs, disposables }
+  // Nothing is owned per character any more — geometry and materials are
+  // shared and outlive every instance.
+  return { root, body, arm, legs, disposables: [] }
 }
 
+/**
+ * Release a character.
+ *
+ * Deliberately does NOT dispose geometry or materials: those are shared by
+ * every character and owned by the module (see {@link disposeCharacterAssets}).
+ * Freeing them here would destroy the buffers the next passenger needs.
+ */
 export function disposeCharacter(parts: CharacterParts): void {
-  for (const d of parts.disposables) d.dispose()
+  parts.root.clear()
   parts.disposables.length = 0
 }
