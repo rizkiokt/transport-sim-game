@@ -38,7 +38,6 @@ npm run dev        # http://localhost:5173
 | `npm run typecheck` | TypeScript only, no emit |
 | `npm test` | Unit tests (Vitest) |
 | `npm run verify` | Boot the game in headless Chrome, assert on live engine state, screenshot |
-
 | `npm run playtest` | Play a full ride in a real browser and assert coins are earned |
 
 `npm run playtest` is the one worth knowing about. It boots the real game in headless Chrome,
