@@ -222,15 +222,27 @@ export class TownScene3D {
         throttle = (Math.abs(delta) > 1.2 ? 0.32 : 1) * approach
         brake = 0
 
-        // Wedged against something: back out and turn, the way a player would.
+        // Wedged against something: reverse straight back, then give up on
+        // this route entirely and let the caller plan a fresh one from
+        // wherever we ended up.
+        //
+        // The previous version reversed with the steering held over, which
+        // could drive the car further into the block it was stuck in, and it
+        // never stopped trying — so a wedged car stayed wedged forever
+        // instead of reporting failure. Reversing straight is safer, and
+        // abandoning the path is what a player does when a route turns out
+        // not to work: reassess rather than keep shoving.
         if (Math.abs(this.#car.speed) < 0.4) {
           this.#autoStuckTime += dt
-          if (this.#autoStuckTime > 0.6) {
+          if (this.#autoStuckTime > 0.5) {
             throttle = 0
             brake = 1
-            steer = 1
+            steer = 0
           }
-          if (this.#autoStuckTime > 2) this.#autoStuckTime = 0
+          if (this.#autoStuckTime > 2.5) {
+            this.#autoPath.length = 0
+            this.#autoStuckTime = 0
+          }
         } else {
           this.#autoStuckTime = 0
         }
