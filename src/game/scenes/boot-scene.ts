@@ -13,6 +13,7 @@ import { BRANDING } from '../config/branding.js'
 import { ParticleShape } from '../../engine/fx/particles.js'
 import { outBack } from '../../engine/anim/easing.js'
 import { fromHex, toCss } from '../../engine/render/color.js'
+import { fitTextSize, font } from '../../engine/render/fonts.js'
 import { capsule, circle, roundRectCentered } from '../../engine/render/shapes.js'
 import { TAU } from '../../engine/math/scalar.js'
 
@@ -189,15 +190,14 @@ export class BootScene implements Scene {
     // Size to the shorter screen dimension, then shrink further if the name
     // would still overflow. Without this, a long title clips off the edges of
     // a narrow portrait tablet.
-    let fontSize = Math.round(viewport.minSide * 0.09)
-    const maxWidth = viewport.width * 0.86
-
-    ctx.font = `700 ${fontSize}px system-ui, sans-serif`
-    const measured = ctx.measureText(BRANDING.title).width
-    if (measured > maxWidth) {
-      fontSize = Math.max(14, Math.floor(fontSize * (maxWidth / measured)))
-      ctx.font = `700 ${fontSize}px system-ui, sans-serif`
-    }
+    const fontSize = fitTextSize(
+      ctx,
+      BRANDING.title,
+      viewport.width * 0.86,
+      Math.round(viewport.minSide * 0.09),
+      700,
+    )
+    ctx.font = font(fontSize, 700)
 
     // Scale after measuring so the spring-in animation never causes clipping.
     ctx.scale(this.#logo.scale, this.#logo.scale)

@@ -24,10 +24,37 @@
       href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚍</text></svg>"
     />
 
+    <!--
+      Self-hosted so the game makes no third-party requests: it keeps working
+      offline, sends nothing to Google, and needs no CDN. The path is
+      deliberately relative so it resolves correctly both at the site root in
+      development and under /<repo>/ on GitHub Pages.
+    -->
+    <link
+      rel="preload"
+      href="fonts/fredoka-latin-var.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+
     <style>
+      /*
+        Fredoka, SIL Open Font License 1.1 — see public/fonts/OFL.txt.
+        A single variable file covers the whole 300-700 weight range.
+      */
+      @font-face {
+        font-family: 'Fredoka';
+        src: url('fonts/fredoka-latin-var.woff2') format('woff2');
+        font-weight: 300 700;
+        font-style: normal;
+        font-display: swap;
+      }
+
       :root {
         color-scheme: dark;
         --sky: #1b2a4a;
+        --font-display: 'Fredoka', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
       }
 
       * {
@@ -48,7 +75,7 @@
         -webkit-user-select: none;
         user-select: none;
         -webkit-tap-highlight-color: transparent;
-        font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+        font-family: var(--font-display);
       }
 
       #app {

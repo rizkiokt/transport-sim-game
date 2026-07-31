@@ -12,6 +12,7 @@
  */
 
 import type { Game } from '../core/game.js'
+import { MONO_FONT } from '../render/fonts.js'
 
 const WIDTH = 210
 const GRAPH_HEIGHT = 46
@@ -97,7 +98,7 @@ export class DebugOverlay {
 
     this.#renderGraph(ctx, PADDING * 2, PADDING * 2, WIDTH - PADDING * 2, GRAPH_HEIGHT)
 
-    ctx.font = '11px ui-monospace, "SF Mono", Menlo, Consolas, monospace'
+    ctx.font = `11px ${MONO_FONT}`
     ctx.textAlign = 'left'
     ctx.textBaseline = 'top'
     ctx.fillStyle = '#d8e2ff'
