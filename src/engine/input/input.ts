@@ -191,6 +191,8 @@ export class InputManager {
   getJustPressedPointers(): PointerState[] {
     const result: PointerState[] = []
     for (const p of this.#pointers.values()) if (p.justPressed) result.push(p)
+    // Include same-frame press-and-release taps (see anyInputJustPressed).
+    for (const p of this.#releasedPointers) if (p.justPressed) result.push(p)
     return result
   }
 
@@ -217,6 +219,11 @@ export class InputManager {
   anyInputJustPressed(): boolean {
     if (this.#keysPressedThisFrame.size > 0) return true
     for (const p of this.#pointers.values()) if (p.justPressed) return true
+    // A fast tap can press AND release between two frames; the pointer is
+    // already in the released list but its justPressed flag is still set.
+    // Missing this drops quick taps entirely — the worst possible bug on a
+    // "tap anywhere to start" screen.
+    for (const p of this.#releasedPointers) if (p.justPressed) return true
     for (const state of this.#actions.values()) if (state.justPressed) return true
     return false
   }

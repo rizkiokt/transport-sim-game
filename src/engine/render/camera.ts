@@ -216,6 +216,15 @@ export class Camera {
   }
 
   /**
+   * Change the resting zoom that {@link follow} scales its speed-zoom from.
+   * Scenes with different framing needs (town vs garage) set this on entry.
+   */
+  setBaseZoom(zoom: number, immediate = false): void {
+    this.#opts.baseZoom = zoom
+    this.setZoom(zoom, immediate)
+  }
+
+  /**
    * A quick magnify-and-settle, for celebration beats.
    *
    * @param amount 0.08 is a subtle pop; 0.2 is a big one.
