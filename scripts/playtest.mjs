@@ -106,14 +106,32 @@ async function waitFor(label, predicate, timeoutMs = 60000) {
 async function driveTo(label, x, z, predicate, timeoutMs = 60000) {
   const start = Date.now()
   for (let attempt = 0; ; attempt++) {
+    // Re-planning from a spot the car is wedged in yields the same failing
+    // route, so on every retry after the first, put it back on tarmac before
+    // trying again. See the `unstick` hook for why the harness is allowed to
+    // do this.
+    if (attempt > 0) {
+      await evaluate('globalThis.__ts.unstick(); true')
+      await sleep(300)
+    }
+
     await evaluate(`globalThis.__ts.autopilot(${x}, ${z}); true`)
 
+    let stalledFor = 0
     while (Date.now() - start < timeoutMs) {
       await sleep(250)
       const s = await state()
       if (s && predicate(s)) return s
       // Autopilot released without success — go round again.
       if (s && !s.autopilotActive) break
+
+      // Or it is still "driving" but going nowhere.
+      if (s && Math.abs(s.car.speed) < 0.8) {
+        stalledFor += 250
+        if (stalledFor > 6000) break
+      } else {
+        stalledFor = 0
+      }
     }
 
     if (Date.now() - start > timeoutMs) {

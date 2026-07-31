@@ -614,6 +614,25 @@ export class TownScene3D {
         this.#refreshShop()
       },
       buyUpgrade: (id: string): boolean => this.#buyUpgrade(id),
+      /**
+       * Lift the car back onto the nearest road.
+       *
+       * A test fixture, not a game mechanic. The autopilot is a naive
+       * waypoint follower with no obstacle avoidance, so it can wedge itself
+       * between buildings in a way a human player never would — they simply
+       * reverse and steer out. Rather than build real navigation just to
+       * satisfy the harness, the harness is allowed to admit defeat and put
+       * the car back on tarmac. Dev builds only.
+       */
+      unstick: (): void => {
+        const near = this.#city.roads.nearestRoad(
+          this.#car.x / WORLD_SCALE,
+          this.#car.z / WORLD_SCALE,
+        )
+        this.#car.place(near.x * WORLD_SCALE, near.y * WORLD_SCALE, near.tangent)
+        this.#autoPath.length = 0
+        this.#autoStuckTime = 0
+      },
       upgrades: (): unknown => ({ ...this.#save.upgrades }),
       effects: (): unknown => ({ ...this.#car.effects }),
       maxSpeed: (): number => this.#car.maxSpeed,
