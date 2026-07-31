@@ -1,0 +1,22 @@
+{
+  "name": "transport-sim-game",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Transport Simulator — a friendly transportation company simulator for young children.",
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run typecheck && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "verify": "node scripts/verify-boot.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.0",
+    "vitest": "^4.1.10"
+  }
+}
