@@ -428,8 +428,10 @@ try {
   // draw calls would jump into the hundreds and a real tablet would die. A
   // few dozen calls for the car's trim is irrelevant on any GPU, so the
   // ceiling is set well above the honest cost of detail and well below what a
-  // collapse would produce.
-  if (stats.calls > 90) throw new Error(`draw calls suggest instancing collapsed: ${stats.calls}`)
+  // collapse would produce. It also now includes post-processing passes,
+  // because render stats accumulate across the whole frame rather than
+  // reporting only the last pass.
+  if (stats.calls > 140) throw new Error(`draw calls suggest instancing collapsed: ${stats.calls}`)
   pass(`scene draws in ${stats.calls} calls (instancing intact)`)
 
   const shot = await send('Page.captureScreenshot', { format: 'png' })

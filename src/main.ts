@@ -232,6 +232,8 @@ async function main(): Promise<void> {
       },
       render: (_alpha, frameDt) => {
         settings.observeFrameRate(loop.stats.fps, frameDt)
+        // Stats accumulate across every pass; reset once per frame.
+        renderer.beginFrame()
         if (town) town.render()
         else renderer.render(skyScene)
       },
@@ -260,6 +262,11 @@ async function main(): Promise<void> {
     // image-based lighting, fog and particle density. Both have to move.
     town?.applySettings()
   })
+
+  // Post-processing render targets have to track the canvas size.
+  renderer.onResize = (width, height): void => {
+    town?.resize(width, height)
+  }
 
   loop.start()
 

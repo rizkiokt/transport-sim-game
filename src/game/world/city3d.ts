@@ -39,6 +39,7 @@ import {
   taperedBlockGeometry,
   trunkGeometry,
 } from '../../engine/three/geometry.js'
+import { applyWorldUV, SurfaceLibrary } from '../../engine/three/textures.js'
 import { applyFacadeWindows } from './facade-material.js'
 import { RoadNetwork } from './road-network.js'
 
@@ -116,7 +117,7 @@ const BUILDING_COLORS = [0xc9705a, 0xe5d3ac, 0x7fb8a4, 0x8fa3bf, 0xe2907a, 0xd9b
 const ROOF_COLORS = [0xb0563f, 0xcbbfa4, 0x6d7f96, 0x8a6f52]
 const FOLIAGE_COLORS = [0x3d7c3f, 0x529a54, 0x2f6b36, 0x67ad5c]
 
-export function generateCity3D(seed: number | string): City3D {
+export function generateCity3D(seed: number | string, surfaces?: SurfaceLibrary): City3D {
   const roads = new RoadNetwork({
     cols: COLS,
     rows: ROWS,
@@ -286,7 +287,15 @@ export function generateCity3D(seed: number | string): City3D {
 
   // Generously oversized so the horizon is grass, never void.
   const groundGeo = new PlaneGeometry((maxX - minX) * 3, (maxZ - minZ) * 3)
-  const groundMat = new MeshStandardMaterial({ color: 0x63a24f, roughness: 0.95, metalness: 0 })
+  const groundMat = new MeshStandardMaterial({ color: 0x9fbf8f, roughness: 0.95, metalness: 0 })
+  if (surfaces) {
+    groundMat.map = surfaces.grass.map
+    groundMat.normalMap = surfaces.grass.normalMap
+    groundMat.roughnessMap = surfaces.grass.roughnessMap
+    // World-space UVs so the grass tiles at a constant density and lines up
+    // with the road edges rather than stretching across one huge plane.
+    applyWorldUV(groundMat, 0.12)
+  }
   disposables.push(groundGeo, groundMat)
   const ground = new Mesh(groundGeo, groundMat)
   ground.rotation.x = -Math.PI / 2
@@ -297,8 +306,21 @@ export function generateCity3D(seed: number | string): City3D {
   // -- Roads and kerbs ----------------------------------------------------
   // Asphalt is dark and fairly rough, but not matte — wet-look sheen at
   // grazing angles is a big part of why a road reads as a road.
-  const roadMat = new MeshStandardMaterial({ color: 0x3f434e, roughness: 0.72, metalness: 0 })
-  const kerbMat = new MeshStandardMaterial({ color: 0xcdc6b6, roughness: 0.9, metalness: 0 })
+  const roadMat = new MeshStandardMaterial({ color: 0xb8bcc6, roughness: 0.72, metalness: 0 })
+  const kerbMat = new MeshStandardMaterial({ color: 0xe8e2d4, roughness: 0.9, metalness: 0 })
+  if (surfaces) {
+    // Colour is pulled toward white because the texture now supplies the
+    // tone; leaving it dark would multiply down to near-black.
+    roadMat.map = surfaces.asphalt.map
+    roadMat.normalMap = surfaces.asphalt.normalMap
+    roadMat.roughnessMap = surfaces.asphalt.roughnessMap
+    applyWorldUV(roadMat, 0.35)
+
+    kerbMat.map = surfaces.concrete.map
+    kerbMat.normalMap = surfaces.concrete.normalMap
+    kerbMat.roughnessMap = surfaces.concrete.roughnessMap
+    applyWorldUV(kerbMat, 0.3)
+  }
   const lineMat = new MeshStandardMaterial({
     color: 0xf4f4f0,
     roughness: 0.75,
@@ -382,6 +404,14 @@ export function generateCity3D(seed: number | string): City3D {
     disposables.push(bodyGeo, capGeo, roofGeo)
 
     const wallMat = new MeshStandardMaterial({ roughness: 0.82, metalness: 0.02 })
+    if (surfaces) {
+      // Roughness only. A normal map here aliases into TV static: the
+      // buildings are instanced from one unit-cube geometry scaled to wildly
+      // different sizes, so a high-frequency map lands at a different texel
+      // density on every building and shimmers. The facade shader already
+      // supplies the visual detail that matters at this distance.
+      wallMat.roughnessMap = surfaces.wall.roughnessMap
+    }
     applyFacadeWindows(wallMat)
     const trimMat = new MeshStandardMaterial({ roughness: 0.88, metalness: 0.02 })
     disposables.push(wallMat, trimMat)

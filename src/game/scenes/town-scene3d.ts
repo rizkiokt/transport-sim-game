@@ -51,6 +51,8 @@ import { Garage } from '../ui/garage.js'
 import { computeEffects, getUpgrade, upgradeCost } from '../../content/upgrades.js'
 import { exportSaveToFile, importSaveFromFile } from '../save.js'
 import { generateCity3D, WORLD_SCALE, type City3D } from '../world/city3d.js'
+import { SurfaceLibrary } from '../../engine/three/textures.js'
+import { PostProcessing } from '../../engine/three/post.js'
 
 const TOWN_SEED = 'sunnyville-1'
 
@@ -78,6 +80,7 @@ export class TownScene3D {
   readonly #save: GameSave
 
   readonly #city: City3D
+  readonly #surfaces: SurfaceLibrary
   readonly #environment: Environment
   readonly #chase: ChaseCamera
   #car: Vehicle3D
@@ -90,6 +93,7 @@ export class TownScene3D {
   readonly #minimap: Minimap
   readonly #shop: Shop
   readonly #garage: Garage
+  #post: PostProcessing | null = null
 
   #time = 0
   #exhaustTimer = 0
@@ -103,7 +107,12 @@ export class TownScene3D {
     this.#save = sanitizeSave(deps.save)
 
     // -- World -----------------------------------------------------------
-    this.#city = generateCity3D(TOWN_SEED)
+    // Textures are generated once here and shared by every surface. The low
+    // tier halves the resolution: texture upload and memory matter far more
+    // than fine detail on a device that is already struggling.
+    const profileTier = deps.renderer.tier
+    this.#surfaces = new SurfaceLibrary(profileTier === 'low' ? 256 : 512)
+    this.#city = generateCity3D(TOWN_SEED, this.#surfaces)
     this.scene.add(this.#city.root)
 
     const profile = RENDER_PROFILES[deps.renderer.tier]
@@ -113,6 +122,7 @@ export class TownScene3D {
       fogFar: profile.drawDistance * 0.95,
     })
     this.#environment.setEnvironmentEnabled(profile.environmentLighting)
+    this.#buildPostChain()
 
     // -- Car -------------------------------------------------------------
     const def = getVehicle(this.#save.activeVehicle)
@@ -222,10 +232,20 @@ export class TownScene3D {
 
     this.#environment.setShadowMapSize(profile.shadowMapSize)
     this.#environment.setEnvironmentEnabled(profile.environmentLighting)
+    this.#buildPostChain()
     this.#environment.setFogRange(profile.drawDistance * 0.35, profile.drawDistance * 0.95)
 
     this.#particles.intensity = settings.particleScale
     this.#chase.shakeScale = settings.shakeScale
+
+    // The post chain belongs to the tier too; without this a downgrade would
+    // keep paying for SSAO it was meant to drop.
+    this.#buildPostChain()
+  }
+
+  /** Keep the post chain's render targets matched to the canvas. */
+  resize(width: number, height: number): void {
+    this.#post?.setSize(width, height)
   }
 
   update(dt: number): void {
@@ -320,10 +340,44 @@ export class TownScene3D {
   }
 
   render(): void {
-    this.#deps.renderer.render(this.scene)
+    // When post-processing is off there is no composer in the path at all —
+    // the scene renders straight to the canvas exactly as before.
+    if (this.#post) this.#post.render()
+    else this.#deps.renderer.render(this.scene)
+  }
+
+  /**
+   * Build (or tear down) the post chain for the current quality tier.
+   *
+   * Recreated rather than reconfigured on a tier change, because the passes
+   * allocate render targets sized to the effect and there is no meaningful
+   * saving in keeping them around.
+   */
+  #buildPostChain(): void {
+    this.#post?.dispose()
+    this.#post = null
+
+    const profile = RENDER_PROFILES[this.#deps.renderer.tier]
+    if (!profile.postProcessing) return
+
+    this.#post = new PostProcessing(
+      this.#deps.renderer.renderer,
+      this.scene,
+      this.#deps.renderer.camera,
+      {
+        ssao: profile.ssao,
+        bloom: true,
+        // MSAA is only on at high tier, so post-AA earns its keep below that.
+        fxaa: !profile.antialias,
+        aoRadius: 0.5,
+      },
+    )
+    this.#post.setSize(this.#deps.renderer.width, this.#deps.renderer.height)
   }
 
   dispose(): void {
+    this.#post?.dispose()
+    this.#post = null
     this.#engineSound.dispose()
     this.#deps.store.flush()
     this.#hud.dispose()
@@ -336,6 +390,7 @@ export class TownScene3D {
     disposeCarMaterials(this.#carMaterials)
     this.#environment.dispose()
     this.#city.dispose()
+    this.#surfaces.dispose()
     this.#removeDevHooks()
   }
 
@@ -737,6 +792,8 @@ export class TownScene3D {
       buyVehicle: (id: string): boolean => this.buyVehicle(id),
       owned: (): unknown => [...this.#save.ownedVehicles],
       openGarage: (): void => this.openGarage(),
+      /** The post chain, for tuning AO from the console. Dev only. */
+      post: (): unknown => this.#post,
       activeVehicle: (): string => this.#car.def.id,
       /**
        * Lift the car back onto the nearest road.

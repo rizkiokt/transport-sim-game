@@ -36,6 +36,28 @@ export interface RenderQualityProfile {
    * per-fragment work that a weak mobile GPU feels immediately.
    */
   environmentLighting: boolean
+  /** Bloom and post-AA. Adds two full-screen passes. */
+  postProcessing: boolean
+  /**
+   * Ambient occlusion.
+   *
+   * OFF EVERYWHERE, deliberately, and not because of cost.
+   *
+   * AO is the single best-value realism effect there is, so this was built
+   * and tuned properly — first with SSAOPass, then GTAOPass. Under headless
+   * SwiftShader (the only GPU available for verification here) GTAO's normal
+   * buffer renders correctly but its depth buffer comes back uniformly at the
+   * far plane, so the AO output is blank at every radius and intensity
+   * tested. It samples a packed depth-stencil texture, which software WebGL
+   * very likely does not support.
+   *
+   * That may well work on real GPU hardware. But shipping a pass that costs
+   * an extra full-scene render and that nobody has ever seen produce a single
+   * dark pixel is strictly negative, so it stays off until someone can point
+   * a real GPU at it. Flip this to true on the high tier to evaluate; the
+   * pass and its tuning hooks are all still here.
+   */
+  ssao: boolean
 }
 
 export const RENDER_PROFILES: Record<QualityTier, RenderQualityProfile> = {
@@ -45,6 +67,8 @@ export const RENDER_PROFILES: Record<QualityTier, RenderQualityProfile> = {
     antialias: false,
     drawDistance: 190,
     environmentLighting: false,
+    postProcessing: false,
+    ssao: false,
   },
   medium: {
     maxPixelRatio: 1.4,
@@ -52,6 +76,8 @@ export const RENDER_PROFILES: Record<QualityTier, RenderQualityProfile> = {
     antialias: false,
     drawDistance: 260,
     environmentLighting: true,
+    postProcessing: true,
+    ssao: false,
   },
   high: {
     maxPixelRatio: 2,
@@ -59,6 +85,8 @@ export const RENDER_PROFILES: Record<QualityTier, RenderQualityProfile> = {
     antialias: true,
     drawDistance: 340,
     environmentLighting: true,
+    postProcessing: true,
+    ssao: false,
   },
 }
 
@@ -107,6 +135,13 @@ export class ThreeRenderer {
     this.renderer.toneMappingExposure = 1.05
     this.renderer.shadowMap.enabled = profile.shadowMapSize > 0
     this.renderer.shadowMap.type = PCFSoftShadowMap
+
+    // Accumulate render stats across every pass in a frame rather than
+    // resetting per render() call. With a post-processing chain the last
+    // render is a full-screen quad, so the automatic behaviour reports one
+    // draw call for the entire scene — which silently defeated the playtest's
+    // instancing guard.
+    this.renderer.info.autoReset = false
 
     this.camera = new PerspectiveCamera(options.fov ?? 55, 1, 0.5, profile.drawDistance)
 
@@ -187,6 +222,11 @@ export class ThreeRenderer {
 
     this.onResize?.(cssWidth, cssHeight)
     return true
+  }
+
+  /** Reset accumulated render stats. Call once at the top of each frame. */
+  beginFrame(): void {
+    this.renderer.info.reset()
   }
 
   render(scene: Scene): void {
