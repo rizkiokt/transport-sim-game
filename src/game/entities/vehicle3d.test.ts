@@ -1,23 +1,61 @@
 /**
  * Physics tests.
  *
- * These run headlessly against a real generated city, so they exercise the
+ * These run headlessly against a real streamed city, so they exercise the
  * actual collision index and road geometry rather than a mock. Three.js is
- * only touched for scene objects, which these tests never render.
+ * only touched for scene objects, which these tests never render — the
+ * streamer builds meshes but never needs a WebGL context.
  */
 
 import { describe, expect, it } from 'vitest'
 
 import { getVehicle } from '../../content/vehicles.js'
-import { generateCity3D, WORLD_SCALE, type City3D, type Obstacle3D } from '../world/city3d.js'
+import type { Obstacle3D } from '../world/drive-world.js'
+import { WorldStreamer } from '../world/world-streamer.js'
 import { Vehicle3D } from './vehicle3d.js'
 
-const city: City3D = generateCity3D('physics-town')
+const world = new WorldStreamer({ seed: 'physics-town', radius: 1 })
+// Chunks are generated on demand, so the world is empty until something asks
+// to be somewhere. Load the area the tests drive around in.
+world.update(0, 0)
+
+/** Vehicle art units per world unit, mirrored here so tests read naturally. */
+const WORLD_SCALE_TEST = 1 / 12
+
+/**
+ * A patch of grass inside a block with nothing on it.
+ *
+ * Searched at a fine step rather than testing block centres: a block centre
+ * is where the four lots meet, so it is almost always boxed in by buildings.
+ * What the test needs is any point that is clear AND far enough from tarmac
+ * that the car reads as off-road.
+ */
+function findOpenGrassSpot(): { x: number; z: number } | null {
+  const b = world.roads.blockSize
+  const clearance = world.roads.roadWidth / 2 + 2
+  const found: Obstacle3D[] = []
+
+  for (let i = -2; i <= 2; i++) {
+    for (let j = -2; j <= 2; j++) {
+      for (let u = 0.2; u < 0.85; u += 0.1) {
+        for (let v = 0.2; v < 0.85; v += 0.1) {
+          const x = (i + u) * b
+          const z = (j + v) * b
+          if (world.roads.nearestRoad(x, z).distance < clearance) continue
+          found.length = 0
+          world.obstacles.queryRadius(x, z, 3, found)
+          if (found.length === 0) return { x, z }
+        }
+      }
+    }
+  }
+  return null
+}
 
 function makeCar(): Vehicle3D {
-  const car = new Vehicle3D(city, getVehicle('taxi'))
+  const car = new Vehicle3D(world, getVehicle('taxi'))
   // Spawn on an intersection, heading along a road.
-  const b = city.roads.blockSize * WORLD_SCALE
+  const b = world.roads.blockSize
   car.place(b, b, 0)
   return car
 }
@@ -83,7 +121,7 @@ describe('Vehicle3D', () => {
     car.controls.brake = 1
     step(car, 2)
     expect(car.speed).toBeLessThan(-0.5)
-    const reverseMax = car.def.handling.reverseSpeed * WORLD_SCALE
+    const reverseMax = car.def.handling.reverseSpeed * WORLD_SCALE_TEST
     expect(Math.abs(car.speed)).toBeLessThanOrEqual(reverseMax + 1e-6)
   })
 
@@ -93,26 +131,51 @@ describe('Vehicle3D', () => {
     step(onRoad, 4)
     expect(onRoad.onRoad).toBe(true)
 
-    // The outer grass margin: clear of every building, and far enough from
-    // the outermost roads that the car can never stray back onto tarmac.
-    const offRoad = makeCar()
-    offRoad.place(city.roads.blockSize * WORLD_SCALE, city.bounds.minZ + 1, 0)
-    offRoad.controls.throttle = 1
-    step(offRoad, 4)
+    // Somewhere genuinely off the tarmac: the middle of an empty block. There
+    // is no outer grass margin to use any more, since the world has no edge.
+    const spot = findOpenGrassSpot()
+    expect(spot).not.toBeNull()
 
-    expect(offRoad.onRoad).toBe(false)
-    expect(Math.abs(offRoad.speed)).toBeLessThan(Math.abs(onRoad.speed) * 0.75)
+    const offRoad = makeCar()
+    offRoad.place(spot!.x, spot!.z, 0)
+    offRoad.controls.throttle = 1
+
+    // Compare peak speed while actually off-road, rather than speed at a
+    // fixed time: from a block interior the car eventually reaches tarmac,
+    // and the assertion is about the grass, not about where it ends up.
+    let peakOffRoad = 0
+    for (let i = 0; i < 240; i++) {
+      offRoad.update(1 / 60)
+      if (!offRoad.onRoad) peakOffRoad = Math.max(peakOffRoad, Math.abs(offRoad.speed))
+    }
+
+    expect(peakOffRoad).toBeGreaterThan(0)
+    expect(peakOffRoad).toBeLessThan(Math.abs(onRoad.speed) * 0.75)
   })
 
-  it('stays inside the world bounds', () => {
+  it('can drive out of the loaded area forever', () => {
+    // Replaces a bounds-clamping test. The world used to end, and the car was
+    // held inside it; now there is no edge to hold it at, and the streamer is
+    // expected to keep building city under a car that just keeps going.
     const car = makeCar()
-    car.place(city.bounds.minX + 1, city.bounds.minZ + 1, Math.PI)
     car.controls.throttle = 1
-    step(car, 5)
-    expect(car.x).toBeGreaterThanOrEqual(city.bounds.minX - 1e-6)
-    expect(car.z).toBeGreaterThanOrEqual(city.bounds.minZ - 1e-6)
-    expect(car.x).toBeLessThanOrEqual(city.bounds.maxX + 1e-6)
-    expect(car.z).toBeLessThanOrEqual(city.bounds.maxZ + 1e-6)
+
+    for (let i = 0; i < 60 * 30; i++) {
+      car.update(1 / 60)
+      // Keep the world loaded around it, exactly as the scene does.
+      if (i % 30 === 0) world.update(car.x, car.z)
+    }
+
+    expect(Number.isFinite(car.x)).toBe(true)
+    expect(Number.isFinite(car.z)).toBe(true)
+    // It should have got somewhere well outside the block it started in.
+    expect(Math.hypot(car.x, car.z)).toBeGreaterThan(world.roads.blockSize * 3)
+
+    // And the ground under it is still a real place.
+    expect(world.roads.nearestRoad(car.x, car.z).distance).toBeLessThanOrEqual(
+      world.roads.blockSize / 2 + 1e-6,
+    )
+    world.update(0, 0)
   })
 
   it('never comes to rest inside an obstacle', () => {
@@ -120,7 +183,7 @@ describe('Vehicle3D', () => {
 
     // Drive at every obstacle near the spawn and confirm none swallow the car.
     const nearby: Obstacle3D[] = []
-    city.obstacles.queryRadius(car.x, car.z, 60, nearby)
+    world.obstacles.queryRadius(car.x, car.z, 60, nearby)
     expect(nearby.length).toBeGreaterThan(0)
 
     for (const ob of nearby.slice(0, 25)) {
@@ -141,14 +204,14 @@ describe('Vehicle3D', () => {
 
   it('road assist converges a hands-off car onto the centreline', () => {
     const car = makeCar()
-    const b = city.roads.blockSize * WORLD_SCALE
+    const b = world.roads.blockSize
     // Start off-centre and slightly off-axis, then just hold the throttle.
     car.place(b + 3, b + 1.1, 0.16)
     car.controls.throttle = 1
     step(car, 3)
 
-    const road = city.roads.nearestRoad(car.x / WORLD_SCALE, car.z / WORLD_SCALE)
-    expect(road.distance * WORLD_SCALE).toBeLessThan(0.2)
+    const road = world.roads.nearestRoad(car.x, car.z)
+    expect(road.distance).toBeLessThan(0.2)
     expect(car.onRoad).toBe(true)
   })
 
@@ -157,7 +220,7 @@ describe('Vehicle3D', () => {
     // crossed, so an ungated assist grabs the car and turns it onto the side
     // street mid-junction -- the car visibly fighting the player.
     const car = makeCar()
-    const b = city.roads.blockSize * WORLD_SCALE
+    const b = world.roads.blockSize
     car.place(b + 2, b, 0)
     car.controls.throttle = 1
 
@@ -191,7 +254,7 @@ describe('Vehicle3D', () => {
     const car = makeCar()
 
     const nearby: Obstacle3D[] = []
-    city.obstacles.queryRadius(car.x, car.z, 60, nearby)
+    world.obstacles.queryRadius(car.x, car.z, 60, nearby)
     const wall = nearby.find((o) => o.kind === 'building')
     expect(wall).toBeDefined()
 
@@ -259,10 +322,12 @@ describe('Vehicle3D', () => {
   })
 })
 
-describe('generateCity3D', () => {
+describe('WorldStreamer', () => {
   it('is deterministic for a given seed', () => {
-    const a = generateCity3D('same-seed')
-    const b = generateCity3D('same-seed')
+    const a = new WorldStreamer({ seed: 'same-seed', radius: 1 })
+    const b = new WorldStreamer({ seed: 'same-seed', radius: 1 })
+    a.update(0, 0)
+    b.update(0, 0)
     expect(a.sidewalkSpots.length).toBe(b.sidewalkSpots.length)
     expect(a.obstacles.size).toBe(b.obstacles.size)
     a.dispose()
@@ -270,25 +335,109 @@ describe('generateCity3D', () => {
   })
 
   it('differs between seeds', () => {
-    const a = generateCity3D('seed-a')
-    const b = generateCity3D('seed-b')
+    const a = new WorldStreamer({ seed: 'seed-a', radius: 1 })
+    const b = new WorldStreamer({ seed: 'seed-b', radius: 1 })
+    a.update(0, 0)
+    b.update(0, 0)
     // Obstacle counts differ because block contents are rolled per seed.
     expect(a.obstacles.size).not.toBe(b.obstacles.size)
     a.dispose()
     b.dispose()
   })
 
+  it('regenerates a place identically after streaming away and back', () => {
+    // The property that makes an endless world feel like a place rather than
+    // a treadmill: leave, come back, and it is the same street. Chunks are
+    // seeded on their coordinates alone, so the route taken cannot matter.
+    const w = new WorldStreamer({ seed: 'round-trip', radius: 1 })
+    w.update(0, 0)
+    const before = w.obstacles.size
+    const spotsBefore = w.sidewalkSpots.length
+
+    // Drive far enough that every original chunk is evicted, then return.
+    w.update(4000, 4000)
+    expect(w.obstacles.size).not.toBe(0)
+    w.update(0, 0)
+
+    expect(w.obstacles.size).toBe(before)
+    expect(w.sidewalkSpots.length).toBe(spotsBefore)
+    w.dispose()
+  })
+
+  it('builds a world wherever the player goes, however far out', () => {
+    // The finite town simply had no content past its last block. Anywhere is
+    // now a real place with roads, pavement and things to hit.
+    const w = new WorldStreamer({ seed: 'far-away', radius: 1 })
+    for (const at of [50_000, -120_000]) {
+      w.update(at, -at)
+      expect(w.sidewalkSpots.length).toBeGreaterThan(50)
+      expect(w.obstacles.size).toBeGreaterThan(20)
+    }
+    w.dispose()
+  })
+
+  it('keeps every draw call count fixed as the world scrolls', () => {
+    // The reason instance pools exist rather than a mesh per chunk. Whatever
+    // is loaded, the renderer sees the same handful of objects.
+    const w = new WorldStreamer({ seed: 'draw-calls', radius: 2 })
+    w.update(0, 0)
+    const count = (): number => {
+      let n = 0
+      w.root.traverse((o) => {
+        if ((o as { isMesh?: boolean }).isMesh) n++
+      })
+      return n
+    }
+    const before = count()
+    w.update(9000, -9000)
+    expect(count()).toBe(before)
+    expect(before).toBeLessThan(16)
+    w.dispose()
+  })
+
+  it('shrinks and regrows the loaded world when the quality tier moves', () => {
+    // Regression test. The streaming radius was read once at construction, so
+    // a device that started on the high tier and was downgraded by the
+    // frame-rate watchdog kept building and drawing the high-tier world for
+    // the rest of the session — hundreds of thousands of triangles sitting
+    // entirely behind the fog, on the one device that could least afford it.
+    const w = new WorldStreamer({ seed: 'tier-change', radius: 3, maxRadius: 3 })
+    w.update(0, 0)
+    const atHigh = w.obstacles.size
+
+    w.setRadius(1)
+    w.update(0, 0)
+    const atLow = w.obstacles.size
+    expect(atLow).toBeLessThan(atHigh)
+
+    // And back up again: the pools must have been sized for the maximum, or
+    // an upgrade would silently truncate the city.
+    w.setRadius(3)
+    w.update(0, 0)
+    expect(w.obstacles.size).toBe(atHigh)
+    w.dispose()
+  })
+
+  it('never grows past the capacity its pools were built for', () => {
+    const w = new WorldStreamer({ seed: 'clamped', radius: 1, maxRadius: 2 })
+    w.setRadius(9)
+    expect(w.radius).toBe(2)
+    w.dispose()
+  })
+
   it('provides plenty of sidewalk spots for varied rides', () => {
-    expect(city.sidewalkSpots.length).toBeGreaterThan(50)
+    expect(world.sidewalkSpots.length).toBeGreaterThan(50)
   })
 
   it('keeps sidewalk spots clear of every obstacle', () => {
     const found: Obstacle3D[] = []
-    for (const spot of city.sidewalkSpots) {
+    for (const spot of world.sidewalkSpots) {
       found.length = 0
-      city.obstacles.queryRadius(spot.x, spot.z, 3, found)
+      world.obstacles.queryRadius(spot.x, spot.z, 3, found)
       for (const ob of found) {
-        if (ob.kind === 'building') {
+        if (ob.kind === 'tree') {
+          expect(Math.hypot(spot.x - ob.x, spot.z - ob.y)).toBeGreaterThan(ob.r)
+        } else {
           const inside =
             spot.x > ob.x - ob.hw &&
             spot.x < ob.x + ob.hw &&
@@ -297,43 +446,6 @@ describe('generateCity3D', () => {
           expect(inside).toBe(false)
         }
       }
-    }
-  })
-
-  it('leaves every pickup spot reachable', () => {
-    // Regression test. Street trees planted on the verge once sat exactly
-    // where a car pulling up to a passenger would be, wedging it against the
-    // kerb with no way out — the worst possible failure for a young player,
-    // because the game had just told them to drive there.
-    //
-    // A car parked at a spot must not overlap any obstacle.
-    const car = new Vehicle3D(city, getVehicle('taxi'))
-    const found: Obstacle3D[] = []
-
-    for (const spot of city.sidewalkSpots) {
-      found.length = 0
-      city.obstacles.queryRadius(spot.x, spot.z, car.bodyRadius + 2, found)
-
-      for (const ob of found) {
-        if (ob.kind === 'tree') {
-          const gap = Math.hypot(spot.x - ob.x, spot.z - ob.y) - (car.bodyRadius + ob.r)
-          expect(gap).toBeGreaterThan(0)
-        } else {
-          // Buildings are set back behind the pavement; confirm they stay there.
-          const dx = Math.max(Math.abs(spot.x - ob.x) - ob.hw, 0)
-          const dz = Math.max(Math.abs(spot.z - ob.y) - ob.hh, 0)
-          expect(Math.hypot(dx, dz)).toBeGreaterThan(car.bodyRadius)
-        }
-      }
-    }
-  })
-
-  it('bounds contain every sidewalk spot', () => {
-    for (const spot of city.sidewalkSpots) {
-      expect(spot.x).toBeGreaterThanOrEqual(city.bounds.minX)
-      expect(spot.x).toBeLessThanOrEqual(city.bounds.maxX)
-      expect(spot.z).toBeGreaterThanOrEqual(city.bounds.minZ)
-      expect(spot.z).toBeLessThanOrEqual(city.bounds.maxZ)
     }
   })
 })

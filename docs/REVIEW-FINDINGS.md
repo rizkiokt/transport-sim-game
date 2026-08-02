@@ -29,9 +29,26 @@ Regression tests were added for the mute path, the softlock (both that it
 escapes and that the aid never becomes spin-on-the-spot), and the pickup
 geometry.
 
+### Fixed later, while building the endless city
+
+8. **`#importSave` did not apply the imported `activeVehicle`.** Importing a
+   save rebuilt upgrades, coins, mute and ride count but left the player
+   driving whatever they had before — and then wrote that back out, silently
+   rewriting the file just loaded. `setVehicle` now runs first, before
+   `applyUpgrades` (which would otherwise be applied to the car it replaced),
+   and the garage, depot and company board all refresh.
+9. **Ride positions came from `cosmeticRng`.** `rng.ts` reserves that stream
+   for effects nobody would notice repeating, and it is advanced by particles
+   and idle animation at a frame-timing-dependent rate — so where a passenger
+   spawned depended on how many sparkles had been drawn. The ride system now
+   owns a dedicated `createRng('rides')`.
+
 ## Outstanding
 
 Ordered by what I would tackle first. None are crashes.
+
+> **Findings 2 and 3 have since been fixed** — see the Fixed list above. The
+> remaining items below are unchanged.
 
 ### 1. Garage logic is duplicated, with divergent behaviour
 
@@ -44,34 +61,20 @@ most likely to produce a bug that is hard to trace.
 *Suggested shape:* a single `Fleet` module owning buy/select/persist, which
 both callers drive; the scene subscribes to it for the model swap.
 
-### 2. `#importSave` does not apply the imported `activeVehicle`
-
-Importing a save rebuilds upgrades, coins, mute and ride count, but leaves
-the player driving whatever they were driving, and does not refresh the
-garage. The car and the save that describes it disagree until the next
-reload.
-
-### 3. Ride positions come from `cosmeticRng`
-
-`rng.ts` explicitly reserves that generator for "effects that are purely
-cosmetic and never persisted". Passenger and destination placement is
-gameplay state. It works today, but it is exactly the kind of documented
-invariant that quietly becomes false.
-
-### 4. Nothing teaches a non-reader how to drive
+### 2. Nothing teaches a non-reader how to drive
 
 The touch stick only materialises *after* the first press, so the single
 gesture the whole game depends on has no affordance. A first-run hint —
 a ghost hand, or the stick shown idle until first use — would fix it.
 
-### 5. Child-facing UI contains English text and an OS file picker
+### 3. Child-facing UI contains English text and an OS file picker
 
 "Save to file" / "Load file" sit inside the upgrade shop, which is the
 child's screen. The picker is a modal dead end for a non-reader, and can
 silently replace all their progress. These are parent controls and belong
 behind the title-screen settings sheet, which already has them.
 
-### 6. Two quality-tier state machines
+### 4. Two quality-tier state machines
 
 `SettingsManager` (`TIER_PROFILES`, `guessInitialTier`) and `ThreeRenderer`
 (`RENDER_PROFILES`, `guessTier`) both probe the device and both hold a tier.

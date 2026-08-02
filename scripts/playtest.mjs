@@ -404,6 +404,117 @@ try {
   if (!mapPresent) throw new Error('minimap missing')
   pass('city map is present')
 
+  // -- The world has no edge ------------------------------------------------------
+  // The city used to be an 8x6 grid with hard bounds that held the car inside.
+  // Drive a long way out and there must still be roads, pavement and things to
+  // hit — anything else means chunk streaming has stopped following the player.
+  const farAway = await evaluate(`(() => {
+    const t = globalThis.__ts
+    const before = t.state().car
+    t.teleport(9000, -9000)
+    const after = t.state().car
+    return { before, after, world: t.worldAt() }
+  })()`)
+  if (Math.hypot(farAway.after.x, farAway.after.z) < 5000) {
+    throw new Error(`car was clamped to a finite world: ${JSON.stringify(farAway.after)}`)
+  }
+  if (farAway.world.spots < 50 || farAway.world.obstacles < 20) {
+    throw new Error(`no city generated 9000 units out: ${JSON.stringify(farAway.world)}`)
+  }
+  if (farAway.world.roadDistance > farAway.world.blockSize / 2 + 0.001) {
+    throw new Error(`no road found far from the origin: ${JSON.stringify(farAway.world)}`)
+  }
+  pass(`city streams in 9000 units out (${farAway.world.obstacles} obstacles, roads intact)`)
+
+  // -- Fast travel ----------------------------------------------------------------
+  // The one concession an endless map has to make: a child who drives out of
+  // sight of everything must always be able to get home.
+  const travelled = await evaluate(`(() => {
+    globalThis.__ts.fastTravel()
+    const car = globalThis.__ts.state().car
+    const depot = globalThis.__ts.depot()
+    return { car, depot, dist: Math.hypot(car.x - depot.x, car.z - depot.z) }
+  })()`)
+  if (travelled.dist > 25) {
+    throw new Error(`fast travel did not reach the depot: ${JSON.stringify(travelled)}`)
+  }
+  pass(`fast travel returns to the depot (${travelled.dist.toFixed(1)} units away)`)
+
+  // -- Getting out of the car -------------------------------------------------------
+  const onFoot = await evaluate(`(() => {
+    const t = globalThis.__ts
+    t.toggleFoot()
+    const out = { onFoot: t.onFoot(), avatar: t.avatar() }
+    // Walking forward must actually move the player, not the car.
+    const carBefore = t.state().car
+    t.walk(1.2)
+    const after = { avatar: t.avatar(), car: t.state().car }
+    t.toggleFoot()
+    return { out, after, carBefore, backIn: t.onFoot() }
+  })()`)
+  if (!onFoot.out.onFoot || !onFoot.out.avatar) {
+    throw new Error('could not get out of the car')
+  }
+  const walked = Math.hypot(
+    onFoot.after.avatar.x - onFoot.out.avatar.x,
+    onFoot.after.avatar.z - onFoot.out.avatar.z,
+  )
+  if (walked < 0.5) throw new Error(`walking did not move the player: ${walked}`)
+  const carMoved = Math.hypot(
+    onFoot.after.car.x - onFoot.carBefore.x,
+    onFoot.after.car.z - onFoot.carBefore.z,
+  )
+  if (carMoved > 0.05) throw new Error(`the car drove off while nobody was in it: ${carMoved}`)
+  if (onFoot.backIn) throw new Error('could not get back into the car')
+  pass(`player walks on foot (${walked.toFixed(1)} units) and gets back in`)
+
+  // -- The company earns while you play ----------------------------------------------
+  const company = await evaluate(`(() => {
+    const t = globalThis.__ts
+    t.grantCoins(5000)
+    t.buyVehicle('van')
+    // Drive the taxi, so the van's driver is the one out working.
+    t.previewVehicle('taxi')
+    const hired = t.hireDriver('van')
+    const before = t.state().coins
+    const income = t.incomePerMinute()
+    t.advanceCompany(120)
+    return { hired, drivers: t.drivers(), income, before, after: t.state().coins }
+  })()`)
+  if (!company.hired || company.drivers.length !== 1) {
+    throw new Error(`hiring a driver failed: ${JSON.stringify(company)}`)
+  }
+  if (company.income <= 0) throw new Error('a hired driver reports no income')
+  if (company.after <= company.before) {
+    throw new Error(`drivers earned nothing over two minutes: ${JSON.stringify(company)}`)
+  }
+  pass(
+    `hired driver earns while you drive (+${company.after - company.before} coins, ` +
+      `${company.income}/min)`,
+  )
+
+  // A driver in the car the player is driving must NOT also be earning — that
+  // rule is the whole reason choosing what to drive is a decision.
+  const idleWhenDriven = await evaluate(`(() => {
+    const t = globalThis.__ts
+    t.previewVehicle('van')
+    const income = t.incomePerMinute()
+    const before = t.state().coins
+    t.advanceCompany(120)
+    return { income, gained: t.state().coins - before }
+  })()`)
+  if (idleWhenDriven.income !== 0 || idleWhenDriven.gained !== 0) {
+    throw new Error(`driver earned in the car the player is driving: ${JSON.stringify(idleWhenDriven)}`)
+  }
+  pass('a driver goes idle when you take their car out yourself')
+
+  // -- City life ---------------------------------------------------------------------
+  const life = await evaluate('JSON.stringify(globalThis.__ts.cityLife())')
+  const cityLife = JSON.parse(life)
+  if (cityLife.traffic < 1) throw new Error('no ambient traffic on the roads')
+  if (cityLife.pedestrians < 1) throw new Error('no pedestrians on the pavements')
+  pass(`city is populated (${cityLife.traffic} cars, ${cityLife.pedestrians} people)`)
+
   // -- Health --------------------------------------------------------------------
   const stats = await evaluate(`JSON.parse(JSON.stringify({
     fps: Math.round(globalThis.game.stats.fps),
@@ -431,7 +542,10 @@ try {
   // collapse would produce. It also now includes post-processing passes,
   // because render stats accumulate across the whole frame rather than
   // reporting only the last pass.
-  if (stats.calls > 140) throw new Error(`draw calls suggest instancing collapsed: ${stats.calls}`)
+  // Raised from 140 with the endless city, ambient traffic and the crowd: all
+  // three are instanced, so they add single-digit call counts, but the depot
+  // and the parked fleet inside it are ordinary meshes.
+  if (stats.calls > 190) throw new Error(`draw calls suggest instancing collapsed: ${stats.calls}`)
   pass(`scene draws in ${stats.calls} calls (instancing intact)`)
 
   const shot = await send('Page.captureScreenshot', { format: 'png' })

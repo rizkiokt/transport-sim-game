@@ -29,7 +29,14 @@ export interface RenderQualityProfile {
   shadowMapSize: number
   /** Enable MSAA. Off on low-end; the cost is real and the gain subtle. */
   antialias: boolean
-  /** How far the camera can see, in world units. Shorter = fewer draws. */
+  /**
+   * How far the camera can see, in world units.
+   *
+   * In a streamed world this is not a free dial: the world only exists as far
+   * as the chunk radius has loaded, so a far plane beyond that shows the
+   * world's edge in clear air. Each tier's distance is set to sit just inside
+   * what its streaming radius guarantees — see WORLD_RADIUS_FOR_TIER.
+   */
   drawDistance: number
   /**
    * Image-based lighting from the sky environment map. Off on low-end: it is
@@ -65,7 +72,7 @@ export const RENDER_PROFILES: Record<QualityTier, RenderQualityProfile> = {
     maxPixelRatio: 1,
     shadowMapSize: 0,
     antialias: false,
-    drawDistance: 190,
+    drawDistance: 165,
     environmentLighting: false,
     postProcessing: false,
     ssao: false,
@@ -74,7 +81,7 @@ export const RENDER_PROFILES: Record<QualityTier, RenderQualityProfile> = {
     maxPixelRatio: 1.4,
     shadowMapSize: 1024,
     antialias: false,
-    drawDistance: 260,
+    drawDistance: 170,
     environmentLighting: true,
     postProcessing: true,
     ssao: false,
@@ -83,7 +90,7 @@ export const RENDER_PROFILES: Record<QualityTier, RenderQualityProfile> = {
     maxPixelRatio: 2,
     shadowMapSize: 2048,
     antialias: true,
-    drawDistance: 340,
+    drawDistance: 255,
     environmentLighting: true,
     postProcessing: true,
     ssao: false,

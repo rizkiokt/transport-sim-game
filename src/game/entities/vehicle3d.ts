@@ -21,9 +21,9 @@
 import { clamp, damp, moveTowards, angleDelta } from '../../engine/math/scalar.js'
 import type { VehicleDef } from '../../content/vehicles.js'
 import { NEUTRAL_EFFECTS, type UpgradeEffects } from '../../content/upgrades.js'
-import type { City3D, Obstacle3D } from '../world/city3d.js'
-import { WORLD_SCALE } from '../world/city3d.js'
-import type { RoadPoint } from '../world/road-network.js'
+import type { DriveWorld, Obstacle3D } from '../world/drive-world.js'
+import { WORLD_SCALE } from '../world/drive-world.js'
+import type { RoadHit } from '../world/infinite-roads.js'
 
 export interface VehicleControls {
   /** 0..1 */
@@ -78,8 +78,8 @@ export class Vehicle3D {
   /** Upgrade multipliers currently applied. */
   effects: UpgradeEffects = NEUTRAL_EFFECTS
 
-  readonly #city: City3D
-  readonly #roadScratch: RoadPoint = { x: 0, y: 0, tangent: 0, distance: 0, segmentIndex: -1 }
+  readonly #world: DriveWorld
+  readonly #roadScratch: RoadHit = { x: 0, z: 0, tangent: 0, distance: 0, horizontal: true }
   readonly #obstacleScratch: Obstacle3D[] = []
   #prevSpeed = 0
   /** Seconds spent asking to move while going nowhere. Drives the unstick aid. */
@@ -88,8 +88,8 @@ export class Vehicle3D {
   /** Wheel radius, for rolling the wheels at the right rate. */
   readonly #wheelRadius: number
 
-  constructor(city: City3D, def: VehicleDef, effects: UpgradeEffects = NEUTRAL_EFFECTS) {
-    this.#city = city
+  constructor(world: DriveWorld, def: VehicleDef, effects: UpgradeEffects = NEUTRAL_EFFECTS) {
+    this.#world = world
     this.def = def
     this.bodyRadius = def.art.width * WORLD_SCALE * 0.62
     this.#wheelRadius = def.art.length * WORLD_SCALE * 0.088
@@ -148,14 +148,11 @@ export class Vehicle3D {
     const handling = this.def.handling
 
     // -- Surface ----------------------------------------------------------
-    // The road network still thinks in 2D layout units, so convert.
-    const road = this.#city.roads.nearestRoad(
-      this.x / WORLD_SCALE,
-      this.z / WORLD_SCALE,
-      this.#roadScratch,
-    )
-    const roadDistance = road.distance * WORLD_SCALE
-    const halfRoad = (this.#city.roads.roadWidth / 2) * WORLD_SCALE
+    // Roads answer in world units now, so there is no conversion here and no
+    // per-step scan: on a grid the nearest road is arithmetic.
+    const road = this.#world.roads.nearestRoad(this.x, this.z, this.#roadScratch)
+    const roadDistance = road.distance
+    const halfRoad = this.#world.roads.roadWidth / 2
     this.onRoad = roadDistance <= halfRoad + 0.5
 
     const surfaceMax = this.onRoad ? this.maxSpeed : this.maxSpeed * GRASS_SPEED_FACTOR
@@ -226,8 +223,8 @@ export class Vehicle3D {
         this.heading += delta * Math.min(1, ASSIST_HEADING_RATE * assist * dt)
 
         const pull = Math.min(1, ASSIST_CENTERING_RATE * assist * dt)
-        this.x += (road.x * WORLD_SCALE - this.x) * pull
-        this.z += (road.y * WORLD_SCALE - this.z) * pull
+        this.x += (road.x - this.x) * pull
+        this.z += (road.z - this.z) * pull
       }
     }
 
@@ -236,7 +233,6 @@ export class Vehicle3D {
     this.z += Math.sin(this.heading) * this.speed * dt
 
     this.#resolveCollisions()
-    this.#clampToBounds()
 
     // Track "asking to move but going nowhere", which is what being wedged
     // actually feels like from the controls' point of view.
@@ -264,7 +260,7 @@ export class Vehicle3D {
   #resolveCollisions(): void {
     const scratch = this.#obstacleScratch
     scratch.length = 0
-    this.#city.obstacles.queryRadius(this.x, this.z, this.bodyRadius + 6, scratch)
+    this.#world.obstacles.queryRadius(this.x, this.z, this.bodyRadius + 6, scratch)
 
     for (const ob of scratch) {
       if (ob.kind === 'building') {
@@ -366,14 +362,4 @@ export class Vehicle3D {
     }
   }
 
-  #clampToBounds(): void {
-    const b = this.#city.bounds
-    const cx = clamp(this.x, b.minX, b.maxX)
-    const cz = clamp(this.z, b.minZ, b.maxZ)
-    if (cx !== this.x || cz !== this.z) {
-      this.x = cx
-      this.z = cz
-      this.speed *= 0.6
-    }
-  }
 }

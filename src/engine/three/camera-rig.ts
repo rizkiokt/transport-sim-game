@@ -159,6 +159,18 @@ export class ChaseCamera {
     this.#opts.distance = distance
   }
 
+  /**
+   * Change how high the camera rides and what it looks at.
+   *
+   * Needed because the rig follows both a car and a person on foot, and a
+   * framing tuned for a 1.4m-tall vehicle looks down at the top of a
+   * pedestrian's head.
+   */
+  setHeights(height: number, lookHeight: number): void {
+    this.#opts.height = height
+    this.#opts.lookHeight = lookHeight
+  }
+
   #apply(dt: number): void {
     this.#updateShake(dt)
 

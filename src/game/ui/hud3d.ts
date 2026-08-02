@@ -18,6 +18,12 @@ export interface HudCallbacks {
   onHorn(): void
   onShop(): void
   onGarage(): void
+  /** Open the company board. */
+  onCompany(): void
+  /** Jump back to the depot from anywhere. */
+  onFastTravel(): void
+  /** Get out of the car, or back into it. */
+  onToggleFoot(): void
 }
 
 /** Drag distances in CSS px for full steering / brake engagement. */
@@ -36,6 +42,9 @@ export class Hud3D {
   readonly #muteButton: HTMLButtonElement
   readonly #shopButton!: HTMLButtonElement
   readonly #garageButton!: HTMLButtonElement
+  readonly #companyButton!: HTMLButtonElement
+  readonly #travelButton!: HTMLButtonElement
+  readonly #footButton!: HTMLButtonElement
   readonly #compass: HTMLDivElement
   readonly #compassArrow: HTMLDivElement
   readonly #stick: HTMLDivElement
@@ -85,6 +94,15 @@ export class Hud3D {
     this.#garageButton = this.#root.querySelector('.hud-garage') as HTMLButtonElement
     this.#garageButton.addEventListener('pointerdown', this.#onGaragePress)
 
+    this.#companyButton = this.#root.querySelector('.hud-company') as HTMLButtonElement
+    this.#companyButton.addEventListener('pointerdown', this.#onCompanyPress)
+
+    this.#travelButton = this.#root.querySelector('.hud-travel') as HTMLButtonElement
+    this.#travelButton.addEventListener('pointerdown', this.#onTravelPress)
+
+    this.#footButton = this.#root.querySelector('.hud-foot') as HTMLButtonElement
+    this.#footButton.addEventListener('pointerdown', this.#onFootPress)
+
     // Driving pointers are captured on the 3D surface, not the HUD, so
     // buttons naturally take precedence without any hit-test bookkeeping.
     this.#surface.addEventListener('pointerdown', this.#onSurfaceDown)
@@ -102,6 +120,17 @@ export class Hud3D {
     window.addEventListener('pointercancel', this.#onGlobalRelease)
     window.addEventListener('blur', this.#onLostFocus)
     document.addEventListener('visibilitychange', this.#onVisibilityChange)
+  }
+
+  /**
+   * Switch the HUD between driving and walking.
+   *
+   * Only the affordances change: the foot button offers the opposite of what
+   * you are doing, and the horn hides because there is nothing to sound.
+   */
+  setOnFoot(onFoot: boolean): void {
+    this.#footButton.classList.toggle('is-on-foot', onFoot)
+    this.#root.classList.toggle('is-on-foot', onFoot)
   }
 
   /** Tell the HUD the balance changed; the counter rolls up to meet it. */
@@ -190,6 +219,24 @@ export class Hud3D {
     e.preventDefault()
     e.stopPropagation()
     this.#callbacks.onShop()
+  }
+
+  readonly #onCompanyPress = (e: PointerEvent): void => {
+    e.preventDefault()
+    e.stopPropagation()
+    this.#callbacks.onCompany()
+  }
+
+  readonly #onTravelPress = (e: PointerEvent): void => {
+    e.preventDefault()
+    e.stopPropagation()
+    this.#callbacks.onFastTravel()
+  }
+
+  readonly #onFootPress = (e: PointerEvent): void => {
+    e.preventDefault()
+    e.stopPropagation()
+    this.#callbacks.onToggleFoot()
   }
 
   readonly #onGaragePress = (e: PointerEvent): void => {
@@ -305,6 +352,34 @@ const TEMPLATE = `
     <path d="M4 15L16 6l12 9v12a1 1 0 01-1 1H5a1 1 0 01-1-1z" fill="currentColor"/>
     <rect x="9" y="19" width="14" height="9" rx="1.5" fill="#fdfbf4"/>
     <path d="M9 22h14M9 25h14" stroke="currentColor" stroke-width="1.6"/>
+  </svg>
+</button>
+
+<button class="hud-company" type="button" aria-label="Your company">
+  <svg viewBox="0 0 32 32" aria-hidden="true">
+    <circle cx="11" cy="9" r="4.2" fill="currentColor"/>
+    <circle cx="21.5" cy="10.5" r="3.4" fill="currentColor" opacity="0.75"/>
+    <path d="M3 24c0-4.4 3.6-8 8-8s8 3.6 8 8z" fill="currentColor"/>
+    <path d="M18 24c0-3.4 2.4-6.3 5.6-6.9 2.9.6 5.4 3.3 5.4 6.9z" fill="currentColor" opacity="0.75"/>
+  </svg>
+</button>
+
+<button class="hud-travel" type="button" aria-label="Go to the depot">
+  <svg viewBox="0 0 32 32" aria-hidden="true">
+    <path d="M4 15L16 6l12 9v11a1 1 0 01-1 1H5a1 1 0 01-1-1z" fill="currentColor"/>
+    <path d="M16 11l6 6h-3.5v5h-5v-5H10z" fill="#fdfbf4"/>
+  </svg>
+</button>
+
+<button class="hud-foot" type="button" aria-label="Get out or get in">
+  <svg class="hud-foot-walk" viewBox="0 0 32 32" aria-hidden="true">
+    <circle cx="17" cy="5.5" r="3.4" fill="currentColor"/>
+    <path d="M17 10c2 0 3 1.4 3.4 3l1.6 5.4 3.4 2.2-1.7 2.7-4.4-2.8-1-3.1-1.4 5 3.7 4.4-2.3 2.8-5.1-6 1.6-6.4-2.4 2.3-.6 4.3-3.2-.5.8-5.7z" fill="currentColor"/>
+  </svg>
+  <svg class="hud-foot-drive" viewBox="0 0 32 32" aria-hidden="true">
+    <path d="M4 21h24M6 21c0-4 2-5 5-5.5l3.5-4h8l4 4c3 .5 5 1.5 5 5.5" fill="currentColor"/>
+    <circle cx="11" cy="23" r="3.6" fill="#fdfbf4"/>
+    <circle cx="23" cy="23" r="3.6" fill="#fdfbf4"/>
   </svg>
 </button>
 

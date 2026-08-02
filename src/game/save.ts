@@ -15,13 +15,15 @@
  * Version history:
  *   v1 — coins, totalRides, activeVehicle, ownedVehicles, muted.
  *   v2 — adds `upgrades`, a per-track level map.
+ *   v3 — adds accessibility and quality preferences.
+ *   v4 — adds `drivers`: the company's hired staff and their vehicles.
  */
 
 import { SaveStore } from '../engine/core/storage.js'
 import { VEHICLES } from '../content/vehicles.js'
 import { UPGRADES } from '../content/upgrades.js'
 
-export const SAVE_VERSION = 3
+export const SAVE_VERSION = 4
 const SAVE_KEY = 'transport-sim.save'
 
 export interface GameSave {
@@ -42,6 +44,13 @@ export interface GameSave {
    */
   reducedMotion: boolean
   quality: 'auto' | 'low' | 'medium' | 'high'
+  /**
+   * Hired drivers, one per vehicle at most.
+   *
+   * Trip progress persists too, so quitting halfway through a driver's run
+   * does not quietly throw that time away.
+   */
+  drivers: Array<{ vehicleId: string; name: string; progress: number }>
 }
 
 export function createDefaultSave(): GameSave {
@@ -54,6 +63,7 @@ export function createDefaultSave(): GameSave {
     upgrades: {},
     reducedMotion: false,
     quality: 'auto',
+    drivers: [],
   }
 }
 
@@ -93,6 +103,23 @@ export function sanitizeSave(save: GameSave): GameSave {
   save.reducedMotion = Boolean(save.reducedMotion)
   if (!QUALITY_VALUES.has(save.quality)) save.quality = 'auto'
 
+  // Drivers: at most one per vehicle, only for vehicles actually owned, and
+  // never for a vehicle that does not exist. A hand-edited save that assigned
+  // three drivers to the bus would otherwise triple that vehicle's income.
+  const seenDrivers = new Set<string>()
+  save.drivers = (Array.isArray(save.drivers) ? save.drivers : []).filter((d) => {
+    if (typeof d !== 'object' || d === null) return false
+    if (typeof d.vehicleId !== 'string' || !save.ownedVehicles.includes(d.vehicleId)) return false
+    if (seenDrivers.has(d.vehicleId)) return false
+    seenDrivers.add(d.vehicleId)
+    d.name = typeof d.name === 'string' && d.name.length > 0 ? d.name.slice(0, 16) : 'Driver'
+    d.progress =
+      typeof d.progress === 'number' && Number.isFinite(d.progress)
+        ? Math.max(0, Math.min(1, d.progress))
+        : 0
+    return true
+  })
+
   // Drop unknown tracks and clamp levels; an out-of-range level would
   // otherwise scale handling without limit.
   const cleanUpgrades: Record<string, number> = {}
@@ -117,6 +144,8 @@ export function createSaveStore(): SaveStore<GameSave> {
       1: (data: unknown) => ({ ...(data as object), upgrades: {} }),
       // v2 did not persist accessibility or quality preferences.
       2: (data: unknown) => ({ ...(data as object), reducedMotion: false, quality: 'auto' }),
+      // v3 predates the company; everyone starts with no staff.
+      3: (data: unknown) => ({ ...(data as object), drivers: [] }),
     },
     validate,
   })
@@ -200,6 +229,10 @@ export function parseSaveFile(text: string): ImportResult {
   }
   if (version < 3) {
     data = { ...(data as object), reducedMotion: false, quality: 'auto' }
+    migrated = true
+  }
+  if (version < 4) {
+    data = { ...(data as object), drivers: [] }
     migrated = true
   }
 

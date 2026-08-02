@@ -503,3 +503,351 @@
 .hud-garage:active {
   transform: translateY(3px);
 }
+
+/* ----------------------------------------------------------------- company */
+
+.company {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 4vmin;
+  background: rgba(12, 22, 40, 0.55);
+  backdrop-filter: blur(3px);
+  pointer-events: auto;
+  font-family: var(--font-display);
+  transition: opacity 200ms ease;
+}
+
+.company.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.company-panel {
+  position: relative;
+  width: min(560px, 94vw);
+  max-height: 88vh;
+  overflow-y: auto;
+  padding: clamp(18px, 4vmin, 30px);
+  border-radius: 22px;
+  background: #fdfbf4;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.4);
+}
+
+/* The headline number: what the whole fleet earns while you play. */
+.company-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 34px;
+  margin-bottom: clamp(12px, 2.5vmin, 20px);
+  color: #45506b;
+}
+
+.company-header-icon {
+  width: clamp(30px, 6vmin, 40px);
+  height: clamp(30px, 6vmin, 40px);
+  flex: none;
+}
+
+.company-total {
+  font-size: clamp(30px, 6.5vmin, 44px);
+  font-weight: 800;
+  color: #2f9a4b;
+  line-height: 1;
+}
+
+.company-total-unit {
+  font-size: clamp(14px, 2.6vmin, 18px);
+  color: #8b8674;
+  align-self: flex-end;
+  padding-bottom: 4px;
+}
+
+.company-list {
+  display: grid;
+  gap: clamp(8px, 1.8vmin, 14px);
+}
+
+.company-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center;
+  gap: clamp(8px, 2vmin, 16px);
+  padding: clamp(8px, 1.6vmin, 12px);
+  border-radius: 16px;
+  background: #f2eee2;
+  border: 3px solid transparent;
+}
+
+/* The car you are driving yourself. Its driver is idle by design. */
+.company-row.is-active {
+  border-color: #ffc93c;
+  background: #fdf6e0;
+}
+
+.company-portrait {
+  position: relative;
+  width: clamp(46px, 9vmin, 58px);
+  height: clamp(46px, 9vmin, 58px);
+  display: grid;
+  place-items: center;
+  flex: none;
+}
+
+.company-ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  /* Start the ring at 12 o'clock rather than 3. */
+  transform: rotate(-90deg);
+}
+
+.company-ring-track,
+.company-ring-fill {
+  fill: none;
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.company-ring-track {
+  stroke: #ded7c5;
+}
+
+.company-ring-fill {
+  stroke: #43c465;
+  /* Only the length animates; a jump backwards at trip end is a hard reset. */
+  transition: stroke-dashoffset 220ms linear;
+}
+
+.company-initial {
+  display: grid;
+  place-items: center;
+  width: 68%;
+  height: 68%;
+  border-radius: 50%;
+  background: var(--paint, #c9c2b1);
+  color: #fff;
+  font-size: clamp(17px, 3.4vmin, 23px);
+  font-weight: 800;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.company-row:not(.is-staffed) .company-initial {
+  background: #ded7c5;
+  color: #8b8674;
+}
+
+.company-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.company-seats {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: clamp(15px, 2.8vmin, 19px);
+  font-weight: 700;
+  color: #56617d;
+}
+
+.company-seats svg {
+  width: 1em;
+  height: 1em;
+  flex: none;
+}
+
+.company-name {
+  font-size: clamp(14px, 2.6vmin, 18px);
+  color: #8b8674;
+}
+
+.company-rate {
+  font-size: clamp(16px, 3.2vmin, 22px);
+  font-weight: 800;
+  color: #2f9a4b;
+}
+
+.company-action {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 48px;
+  min-width: clamp(72px, 14vmin, 96px);
+  padding: 0 clamp(10px, 2vmin, 16px);
+  border: none;
+  border-radius: 999px;
+  background: #43c465;
+  color: #fff;
+  font-family: inherit;
+  font-size: clamp(16px, 3.2vmin, 21px);
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 0 #2f9a4b;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition: transform 120ms ease, box-shadow 120ms ease, background 200ms ease;
+}
+
+.company-action:active:not(:disabled) {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 #2f9a4b;
+}
+
+/* `display: flex` above beats the UA stylesheet's rule for the `hidden`
+   attribute, so a staffed row kept showing its hire button next to the driver
+   who was already there. Author rules need an author rule to undo them. */
+.company-action[hidden] {
+  display: none;
+}
+
+/* Unaffordable is shown, never explained — the price stays visible so a child
+   can see what they are saving toward. */
+.company-action:disabled {
+  background: #c9c2b1;
+  box-shadow: 0 4px 0 #aca594;
+  cursor: default;
+}
+
+.company-action.is-hired {
+  animation: buy-pop 420ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .company-ring-fill {
+    transition: none;
+  }
+  .company-action.is-hired {
+    animation: none;
+  }
+}
+
+/* ------------------------------------------------- company / travel / foot */
+
+/* Fourth in the right-hand button column, below the garage. */
+.hud-company {
+  position: absolute;
+  pointer-events: auto;
+  top: calc(clamp(12px, 2.5vmin, 24px) + (clamp(52px, 9vmin, 72px) + 12px) * 3);
+  right: clamp(12px, 2.5vmin, 24px);
+  display: grid;
+  place-items: center;
+  width: clamp(52px, 9vmin, 72px);
+  height: clamp(52px, 9vmin, 72px);
+  border: none;
+  border-radius: 50%;
+  padding: 0;
+  cursor: pointer;
+  background: #a06ae8;
+  color: #fff;
+  box-shadow: 0 4px 0 #7c48c4, 0 6px 16px rgba(0, 0, 0, 0.25);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition: transform 120ms ease;
+}
+
+.hud-company svg {
+  width: 58%;
+  height: 58%;
+}
+
+.hud-company:active {
+  transform: translateY(3px);
+}
+
+/* Top left, under the coin pill: "take me home" wants to be nowhere near the
+   driving controls, because pressing it by accident mid-ride is a real cost. */
+.hud-travel {
+  position: absolute;
+  pointer-events: auto;
+  top: calc(clamp(12px, 2.5vmin, 24px) + clamp(48px, 8vmin, 64px) + 12px);
+  left: clamp(12px, 2.5vmin, 24px);
+  display: grid;
+  place-items: center;
+  width: clamp(52px, 9vmin, 72px);
+  height: clamp(52px, 9vmin, 72px);
+  border: none;
+  border-radius: 50%;
+  padding: 0;
+  cursor: pointer;
+  background: #4cc9f0;
+  color: #fff;
+  box-shadow: 0 4px 0 #2ba3c8, 0 6px 16px rgba(0, 0, 0, 0.25);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition: transform 120ms ease;
+}
+
+.hud-travel svg {
+  width: 60%;
+  height: 60%;
+}
+
+.hud-travel:active {
+  transform: translateY(3px);
+}
+
+/* Bottom right, directly above the horn — both are "things you do with the
+   car", and grouping them keeps the driving thumb's territory intact. */
+.hud-foot {
+  position: absolute;
+  pointer-events: auto;
+  right: clamp(12px, 2.5vmin, 24px);
+  bottom: calc(clamp(12px, 2.5vmin, 24px) + clamp(64px, 12vmin, 92px) + 12px);
+  display: grid;
+  place-items: center;
+  width: clamp(56px, 10vmin, 78px);
+  height: clamp(56px, 10vmin, 78px);
+  border: none;
+  border-radius: 50%;
+  padding: 0;
+  cursor: pointer;
+  background: #43c465;
+  color: #fff;
+  box-shadow: 0 4px 0 #2f9a4b, 0 6px 16px rgba(0, 0, 0, 0.25);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition: transform 120ms ease;
+}
+
+.hud-foot svg {
+  width: 60%;
+  height: 60%;
+  grid-area: 1 / 1;
+}
+
+.hud-foot:active {
+  transform: translateY(3px);
+}
+
+/* The icon shows what pressing it DOES, not what you currently are: while
+   driving it offers a walker, and while walking it offers a car. */
+.hud-foot .hud-foot-drive {
+  display: none;
+}
+
+.hud-foot.is-on-foot .hud-foot-walk {
+  display: none;
+}
+
+.hud-foot.is-on-foot .hud-foot-drive {
+  display: block;
+}
+
+.hud-foot.is-on-foot {
+  background: #ff8c42;
+  box-shadow: 0 4px 0 #d96a24, 0 6px 16px rgba(0, 0, 0, 0.25);
+}
+
+/* Out of the car there is nothing to sound, so the horn steps aside. */
+.hud.is-on-foot .hud-horn {
+  opacity: 0;
+  pointer-events: none;
+}

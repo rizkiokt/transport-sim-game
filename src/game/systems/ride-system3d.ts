@@ -27,11 +27,19 @@ import {
 } from 'three'
 
 import { clamp, dampAngle, lerp } from '../../engine/math/scalar.js'
-import { cosmeticRng } from '../../engine/math/rng.js'
+import { createRng, type Rng } from '../../engine/math/rng.js'
 import { outQuad, pulse } from '../../engine/anim/easing.js'
 import { createCharacter, disposeCharacter, type CharacterParts } from '../art/character-model.js'
 import type { Vehicle3D } from '../entities/vehicle3d.js'
-import type { City3D } from '../world/city3d.js'
+/**
+ * Everything this system needs from the world: somewhere for people to stand.
+ *
+ * Narrowed from the whole city object so the ride loop works unchanged against
+ * a streamed, endless world — where the set of spots changes as chunks load.
+ */
+export interface SpotSource {
+  readonly sidewalkSpots: ReadonlyArray<{ x: number; z: number }>
+}
 
 export type RidePhase = 'waiting' | 'boarding' | 'riding' | 'arriving' | 'gap'
 
@@ -87,8 +95,18 @@ export class RideSystem3D {
   #phaseTime = 0
   #time = 0
 
-  readonly #city: City3D
+  readonly #world: SpotSource
   readonly #events: RideEvents
+  /**
+   * Where passengers appear.
+   *
+   * Deliberately NOT the shared `cosmeticRng`. That stream is documented as
+   * being for effects nobody would notice repeating, and is advanced by
+   * particles and idle animation at a rate that depends on frame timing — so
+   * drawing gameplay positions from it made where a passenger spawns depend on
+   * how many sparkles happened to have been drawn.
+   */
+  readonly #rng: Rng = createRng('rides')
   readonly #scene: Scene
 
   #character: CharacterParts | null = null
@@ -99,9 +117,9 @@ export class RideSystem3D {
   readonly #ringMaterial: MeshLambertMaterial
   readonly #disposables: Array<BufferGeometry | Material> = []
 
-  constructor(scene: Scene, city: City3D, events: RideEvents, ridesCompleted: number) {
+  constructor(scene: Scene, world: SpotSource, events: RideEvents, ridesCompleted: number) {
     this.#scene = scene
-    this.#city = city
+    this.#world = world
     this.#events = events
     this.ridesCompleted = ridesCompleted
 
@@ -363,11 +381,11 @@ export class RideSystem3D {
     minDist: number,
     maxDist: number,
   ): { x: number; z: number } | null {
-    const spots = this.#city.sidewalkSpots
+    const spots = this.#world.sidewalkSpots
     if (spots.length === 0) return null
 
     for (let attempt = 0; attempt < 24; attempt++) {
-      const spot = spots[Math.floor(cosmeticRng.next() * spots.length)]!
+      const spot = spots[Math.floor(this.#rng.next() * spots.length)]!
       const dist = Math.hypot(spot.x - x, spot.z - z)
       if (dist >= minDist && dist <= maxDist) return spot
     }

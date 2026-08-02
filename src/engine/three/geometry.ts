@@ -85,8 +85,15 @@ export function taperedBlockGeometry(
   depth: number,
   taper = 0.88,
   radius = 0.12,
+  /**
+   * Corner subdivisions. The streamed city keeps hundreds more buildings on
+   * screen than the fixed town did, so it drops this to 1 — the silhouette
+   * still reads as a rounded block at street distance, at a fraction of the
+   * triangles.
+   */
+  smoothness = 3,
 ): BufferGeometry {
-  const geometry = roundedBoxGeometry(width, height, depth, radius)
+  const geometry = roundedBoxGeometry(width, height, depth, radius, smoothness)
 
   // Scale each vertex's X/Z toward the centre in proportion to its height.
   const pos = geometry.attributes['position']
@@ -124,8 +131,10 @@ export function cabinGeometry(
   width: number,
   slope: number,
   radius = 0.05,
+  /** Corner subdivisions. Ambient traffic drops this to 1; see taperedBlockGeometry. */
+  smoothness = 3,
 ): BufferGeometry {
-  const geometry = roundedBoxGeometry(length, height, width, radius)
+  const geometry = roundedBoxGeometry(length, height, width, radius, smoothness)
 
   const pos = geometry.attributes['position']
   if (!pos) return geometry

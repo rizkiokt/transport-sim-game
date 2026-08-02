@@ -44,23 +44,36 @@ import {
 import { Vehicle3D } from '../entities/vehicle3d.js'
 import { type GameSave, sanitizeSave } from '../save.js'
 import { RideSystem3D } from '../systems/ride-system3d.js'
+import { TrafficSystem } from '../systems/traffic.js'
+import { Crowd } from '../systems/crowd.js'
+import { CompanySystem, hireCost, type Driver } from '../systems/company.js'
+import { CompanyBoard } from '../ui/company.js'
+import { Avatar } from '../entities/avatar.js'
 import { Hud3D } from '../ui/hud3d.js'
 import { Minimap } from '../ui/minimap.js'
 import { Shop } from '../ui/shop.js'
 import { Garage } from '../ui/garage.js'
 import { computeEffects, getUpgrade, upgradeCost } from '../../content/upgrades.js'
 import { exportSaveToFile, importSaveFromFile } from '../save.js'
-import { generateCity3D, WORLD_SCALE, type City3D } from '../world/city3d.js'
+import { BLOCK_SIZE, WORLD_RADIUS_FOR_TIER, WorldStreamer } from '../world/world-streamer.js'
+import { Depot, DEPOT_BLOCK_X, DEPOT_BLOCK_Z } from '../world/depot.js'
 import { SurfaceLibrary } from '../../engine/three/textures.js'
 import { PostProcessing } from '../../engine/three/post.js'
 
 const TOWN_SEED = 'sunnyville-1'
+
+/** Centre of the depot block. The one fixed landmark in an endless city. */
+const DEPOT_X = (DEPOT_BLOCK_X + 0.5) * BLOCK_SIZE
+const DEPOT_Z = (DEPOT_BLOCK_Z + 0.5) * BLOCK_SIZE
 
 const CONFETTI_COLORS = [0xff6b6b, 0xffd166, 0x06d6a0, 0x4cc9f0, 0xf72585]
 const COIN_COLORS = [0xffc93c, 0xffe08a]
 const DUST_COLORS = [0xc9bfa8, 0xb8ad94, 0xd8cfba]
 const SPARKLE_COLORS = [0xffd166, 0xffe9a8, 0xffffff]
 const UPGRADE_IDS = ['speed', 'boost', 'grip', 'fare'] as const
+
+/** How close to the parked car you have to be to get back in, world units. */
+const REBOARD_RADIUS = 7
 
 export interface TownDeps {
   renderer: ThreeRenderer
@@ -79,7 +92,8 @@ export class TownScene3D {
   readonly #deps: TownDeps
   readonly #save: GameSave
 
-  readonly #city: City3D
+  readonly #world: WorldStreamer
+  readonly #depot: Depot
   readonly #surfaces: SurfaceLibrary
   readonly #environment: Environment
   readonly #chase: ChaseCamera
@@ -87,12 +101,24 @@ export class TownScene3D {
   #carParts: CarParts
   readonly #carMaterials: CarSharedMaterials
   readonly #rides: RideSystem3D
+  readonly #traffic: TrafficSystem
+  readonly #crowd: Crowd
   readonly #hud: Hud3D
   readonly #particles: ParticleSystem3D
   readonly #engineSound: EngineSound
   readonly #minimap: Minimap
   readonly #shop: Shop
   readonly #garage: Garage
+  readonly #company: CompanySystem
+  readonly #companyBoard: CompanyBoard
+  /**
+   * The player on foot. Built lazily the first time they step out, because
+   * most sessions never will and a character model is not free.
+   */
+  #avatar: Avatar | null = null
+  #onFoot = false
+  /** Latches the depot trigger so it fires on arrival, not every frame. */
+  #wasInDepot = false
   #post: PostProcessing | null = null
 
   #time = 0
@@ -112,8 +138,23 @@ export class TownScene3D {
     // than fine detail on a device that is already struggling.
     const profileTier = deps.renderer.tier
     this.#surfaces = new SurfaceLibrary(profileTier === 'low' ? 256 : 512)
-    this.#city = generateCity3D(TOWN_SEED, this.#surfaces)
-    this.scene.add(this.#city.root)
+    this.#world = new WorldStreamer({
+      seed: TOWN_SEED,
+      surfaces: this.#surfaces,
+      // Tied to the tier's draw distance, so the world always reaches the
+      // fog. The streamer only pays for a rebuild when the player crosses a
+      // chunk boundary, so a larger radius costs memory, not frame time.
+      radius: WORLD_RADIUS_FOR_TIER[profileTier],
+      // The watchdog can move the tier either way at runtime, so the instance
+      // pools must be big enough for the largest world any tier asks for.
+      maxRadius: Math.max(...Object.values(WORLD_RADIUS_FOR_TIER)),
+      reservedBlocks: new Set([`${DEPOT_BLOCK_X}:${DEPOT_BLOCK_Z}`]),
+    })
+    this.scene.add(this.#world.root)
+
+    this.#depot = new Depot({ x: DEPOT_X, z: DEPOT_Z, blockSize: BLOCK_SIZE })
+    this.scene.add(this.#depot.root)
+    this.#world.addStaticObstacles(this.#depot.obstacles)
 
     const profile = RENDER_PROFILES[deps.renderer.tier]
     this.#environment = new Environment(this.scene, deps.renderer.renderer, {
@@ -126,12 +167,14 @@ export class TownScene3D {
 
     // -- Car -------------------------------------------------------------
     const def = getVehicle(this.#save.activeVehicle)
-    this.#car = new Vehicle3D(this.#city, def, computeEffects(this.#save.upgrades))
+    this.#car = new Vehicle3D(this.#world, def, computeEffects(this.#save.upgrades))
 
-    const roads = this.#city.roads
-    const spawnX = Math.round(roads.cols / 2 - 1) * roads.blockSize * WORLD_SCALE
-    const spawnZ = Math.round(roads.rows / 2 - 1) * roads.blockSize * WORLD_SCALE
-    this.#car.place(spawnX, spawnZ, 0)
+    // Start where fast travel lands you: on the street outside the depot,
+    // facing along it. The world has no centre any more, so "at the depot" is
+    // what starting means — and reusing the arrival point rather than a hand
+    // -picked offset is what keeps the chase camera out of the shed walls.
+    this.#car.place(this.#depot.arrivalX, this.#depot.arrivalZ, this.#depot.arrivalHeading)
+    this.#world.refresh(this.#car.x, this.#car.z)
 
     this.#carMaterials = createCarMaterials()
     this.#carParts = createCar({ art: def.art, paint: def.paint }, this.#carMaterials)
@@ -159,13 +202,33 @@ export class TownScene3D {
     // -- Rides ------------------------------------------------------------
     this.#rides = new RideSystem3D(
       this.scene,
-      this.#city,
+      this.#world,
       {
         onPickup: (x, y, z) => this.#handlePickup(x, y, z),
         onDropoff: (fare, x, y, z) => this.#handleDropoff(fare, x, y, z),
       },
       this.#save.totalRides,
     )
+
+    // -- City life --------------------------------------------------------
+    // Both are pooled and instanced, so their cost is a handful of draw calls
+    // regardless of population. Density drops on weaker devices.
+    const busy = profileTier === 'low' ? 0.5 : profileTier === 'medium' ? 0.75 : 1
+    this.#traffic = new TrafficSystem({
+      roads: this.#world.roads,
+      count: Math.round(18 * busy),
+      despawnRadius: profile.drawDistance * 0.8,
+    })
+    this.scene.add(this.#traffic.root)
+    this.#traffic.reset(this.#car.x, this.#car.z)
+
+    this.#crowd = new Crowd({
+      roads: this.#world.roads,
+      count: Math.round(30 * busy),
+      despawnRadius: Math.min(90, profile.drawDistance * 0.6),
+    })
+    this.scene.add(this.#crowd.root)
+    this.#crowd.reset(this.#car.x, this.#car.z)
 
     // -- HUD --------------------------------------------------------------
     this.#hud = new Hud3D(
@@ -176,6 +239,9 @@ export class TownScene3D {
         onHorn: () => this.#honk(),
         onShop: () => this.#openShop(),
         onGarage: () => this.openGarage(),
+        onCompany: () => this.#openCompany(),
+        onFastTravel: () => this.fastTravelToDepot(),
+        onToggleFoot: () => this.toggleOnFoot(),
       },
       this.#save.coins,
     )
@@ -184,9 +250,8 @@ export class TownScene3D {
     // The map mounts inside the HUD layer so it inherits its safe-area
     // padding and pointer-events rules.
     this.#minimap = new Minimap(this.#hud.layer, {
-      bounds: this.#city.bounds,
-      roads: this.#city.roads,
-      worldScale: WORLD_SCALE,
+      blockSize: this.#world.roads.blockSize,
+      roadWidth: this.#world.roads.roadWidth,
     })
 
     this.#shop = new Shop(deps.hudContainer, {
@@ -207,8 +272,24 @@ export class TownScene3D {
         playClick(this.#deps.audio)
       },
     })
+    // -- Company -----------------------------------------------------------
+    this.#company = new CompanySystem(
+      { onEarn: (driver, coins) => this.#handleDriverEarnings(driver, coins) },
+      this.#save.drivers,
+    )
+    this.#companyBoard = new CompanyBoard(deps.hudContainer, {
+      onHire: (id) => this.#hireDriver(id),
+      onClose: () => {
+        this.#companyBoard.setOpen(false)
+        playClick(this.#deps.audio)
+      },
+    })
+
+    this.#depot.setFleet(this.#save.ownedVehicles, this.#save.activeVehicle)
+
     this.#refreshShop()
     this.#refreshGarage()
+    this.#refreshCompany()
 
     this.#engineSound = new EngineSound(deps.audio)
 
@@ -229,6 +310,13 @@ export class TownScene3D {
   applySettings(): void {
     const settings = this.#deps.settings
     const profile = RENDER_PROFILES[this.#deps.renderer.tier]
+
+    // The streamed world belongs to the tier too. This is the difference
+    // between a downgrade actually helping and a downgrade only moving the
+    // fog in while the same geometry keeps being built behind it.
+    this.#world.setRadius(WORLD_RADIUS_FOR_TIER[this.#deps.renderer.tier])
+    const focus = this.#onFoot && this.#avatar ? this.#avatar : this.#car
+    this.#world.update(focus.x, focus.z)
 
     this.#environment.setShadowMapSize(profile.shadowMapSize)
     this.#environment.setEnvironmentEnabled(profile.environmentLighting)
@@ -308,35 +396,71 @@ export class TownScene3D {
       }
     }
 
-    this.#car.controls.throttle = throttle
-    this.#car.controls.brake = brake
-    this.#car.controls.steer = steer
+    // The same three numbers drive either the car or the walker. Which one
+    // they reach is the ONLY difference between the two modes — a child who
+    // can drive can already walk.
+    const controlled = this.#onFoot && this.#avatar ? this.#avatar.controls : this.#car.controls
+    controlled.throttle = throttle
+    controlled.brake = brake
+    controlled.steer = steer
+
+    if (this.#onFoot) {
+      // Whatever the player is not currently holding must not keep its last
+      // instruction, or the car drives off on its own the moment they step
+      // out mid-throttle.
+      this.#car.controls.throttle = 0
+      this.#car.controls.brake = 0
+      this.#car.controls.steer = 0
+    }
 
     if (input.justPressed('horn')) this.#honk()
     if (input.justPressed('mute')) this.#toggleMute()
 
     // -- Simulation --------------------------------------------------------
+    // Everything that streams or spawns follows the PLAYER, not the car —
+    // otherwise walking away from a parked car would take you out of the
+    // loaded world and leave you standing on blank ground.
+    const focus = this.#onFoot && this.#avatar ? this.#avatar : this.#car
+    this.#world.update(focus.x, focus.z)
+
     this.#car.update(dt)
+    if (this.#onFoot) this.#avatar?.update(dt)
+
     this.#rides.update(dt, this.#car)
+    this.#traffic.update(dt, focus.x, focus.z)
+    this.#crowd.update(dt, focus.x, focus.z)
+    // Drivers earn while you play; the car you are in is the one that does not.
+    this.#company.update(dt, this.#car.def.id)
 
     this.#syncCarTransform()
     this.#updateFeedback(dt, throttle, brake)
 
+    // Walking into your own depot opens it. Doing this by arriving rather
+    // than by pressing a button is the point of the building existing.
+    this.#updateDepotProximity()
+
     // -- Camera, lights, audio ---------------------------------------------
-    this.#chase.follow(this.#car.x, 0.8, this.#car.z, this.#car.heading, this.#car.speedFraction, dt)
-    this.#environment.followTarget(this.#car.x, 0, this.#car.z)
+    const speedFraction = this.#onFoot ? 0 : this.#car.speedFraction
+    const heading = this.#onFoot && this.#avatar ? this.#avatar.heading : this.#car.heading
+    this.#chase.follow(focus.x, 0.8, focus.z, heading, speedFraction, dt)
+    this.#environment.followTarget(focus.x, 0, focus.z)
     this.#particles.update(dt)
-    this.#engineSound.update(this.#car.speedFraction)
+    this.#engineSound.update(speedFraction)
 
     this.#hud.update(dt)
     this.#updateCompass()
 
-    this.#minimap.update(
-      this.#car,
+    if (this.#companyBoard.isOpen) this.#refreshCompany()
+
+    this.#minimap.update(this.#onFoot && this.#avatar ? this.#avatar : this.#car, [
+      { x: DEPOT_X, z: DEPOT_Z, color: 0x4cc9f0, square: true },
+      // Where you left the car. Only while on foot — otherwise it would sit
+      // permanently under the player's own arrow.
+      this.#onFoot ? { x: this.#car.x, z: this.#car.z, color: 0xffc93c } : null,
       this.#rides.hasTarget
         ? { x: this.#rides.targetX, z: this.#rides.targetZ, color: this.#rides.color }
         : null,
-    )
+    ])
   }
 
   render(): void {
@@ -384,12 +508,17 @@ export class TownScene3D {
     this.#minimap.dispose()
     this.#shop.dispose()
     this.#garage.dispose()
+    this.#companyBoard.dispose()
+    this.#avatar?.dispose()
+    this.#traffic.dispose()
+    this.#crowd.dispose()
     this.#rides.dispose()
     this.#particles.dispose()
     disposeCar(this.#carParts)
     disposeCarMaterials(this.#carMaterials)
     this.#environment.dispose()
-    this.#city.dispose()
+    this.#depot.dispose()
+    this.#world.dispose()
     this.#surfaces.dispose()
     this.#removeDevHooks()
   }
@@ -639,15 +768,16 @@ export class TownScene3D {
     this.scene.remove(this.#carParts.root)
     disposeCar(this.#carParts)
 
-    this.#car = new Vehicle3D(this.#city, def, computeEffects(this.#save.upgrades))
+    this.#car = new Vehicle3D(this.#world, def, computeEffects(this.#save.upgrades))
     this.#car.place(x, z, heading)
     this.#car.speed = speed
 
     this.#carParts = createCar({ art: def.art, paint: def.paint }, this.#carMaterials)
     this.scene.add(this.#carParts.root)
 
-    // Bigger vehicles need the camera further back or they fill the screen.
-    this.#chase.setDistance(6.2 + def.art.length * ART_TO_WORLD * 0.5)
+    // Bigger vehicles need the camera further back or they fill the screen —
+    // unless the player is out of the car, where the walker's framing wins.
+    this.#applyCameraFraming()
 
     // Place the new model immediately rather than waiting for the next
     // update. Without this the car sits at the world origin until the next
@@ -657,6 +787,11 @@ export class TownScene3D {
 
     this.#save.activeVehicle = def.id
     this.#deps.store.save(this.#save)
+
+    // The car you just took out is no longer parked in the depot, and its
+    // driver (if it has one) has just gone idle.
+    this.#depot.setFleet(this.#save.ownedVehicles, def.id)
+    this.#refreshCompany()
   }
 
   /** Buy a vehicle. Returns true when the purchase went through. */
@@ -671,10 +806,233 @@ export class TownScene3D {
 
     this.#hud.setCoins(this.#save.coins, true)
     this.setVehicle(def.id)
+
+    // A newly bought car is parked in the depot until it is driven, and it
+    // becomes staffable on the company board the moment it is owned.
+    this.#depot.setFleet(this.#save.ownedVehicles, this.#save.activeVehicle)
+
     this.#refreshShop()
     this.#refreshGarage()
+    this.#refreshCompany()
     playDropoff(this.#deps.audio)
     return true
+  }
+
+  // -- On foot ----------------------------------------------------------------
+
+  /** True while the player is out of the car. */
+  get isOnFoot(): boolean {
+    return this.#onFoot
+  }
+
+  /**
+   * Get out of the car, or get back in.
+   *
+   * Getting out parks the car where it stands and puts a walker beside the
+   * driver's door. Getting back in is only offered near the car, and snaps
+   * the player back into it.
+   *
+   * Refusing to step out while moving is deliberate: leaping from a moving
+   * vehicle is exactly the kind of thing a six-year-old will try, and the
+   * result — a car continuing away driverless — has no good outcome.
+   */
+  toggleOnFoot(): void {
+    if (!this.#onFoot) {
+      if (Math.abs(this.#car.speed) > 0.6) {
+        // Not a refusal the child has to understand: just brake for them.
+        this.#car.controls.throttle = 0
+        this.#car.controls.brake = 1
+        return
+      }
+
+      const avatar = this.#ensureAvatar()
+      // Beside the car, but facing the way the CAR was facing rather than
+      // away from it. The chase camera sits behind whatever it follows, so a
+      // walker facing away from the car puts the camera directly on top of
+      // the roof — you step out and the screen fills with paintwork.
+      const side = this.#car.heading + Math.PI / 2
+      const reach = this.#car.def.art.width * ART_TO_WORLD * 0.5 + 1.1
+      avatar.place(
+        this.#car.x + Math.cos(side) * reach,
+        this.#car.z + Math.sin(side) * reach,
+        this.#car.heading,
+      )
+      avatar.parts.root.visible = true
+
+      this.#onFoot = true
+      this.#car.controls.throttle = 0
+      this.#car.controls.brake = 0
+      this.#car.controls.steer = 0
+      this.#car.speed = 0
+    } else {
+      const avatar = this.#avatar
+      if (!avatar) return
+      // Near the car, but generously so. Requiring arm's length made the
+      // button silently do nothing from a couple of paces away, which for a
+      // child reads as the game being broken rather than as a rule. The
+      // parked car is marked on the map while on foot, so "walk back to it"
+      // is always a followable instruction.
+      if (Math.hypot(avatar.x - this.#car.x, avatar.z - this.#car.z) > REBOARD_RADIUS) return
+
+      avatar.parts.root.visible = false
+      this.#onFoot = false
+    }
+
+    this.#hud.setOnFoot(this.#onFoot)
+    this.#applyCameraFraming()
+    playClick(this.#deps.audio)
+  }
+
+  /**
+   * Open the garage when the player reaches the depot.
+   *
+   * Fires once per arrival, not once per frame, and only when they are
+   * actually stopped — driving through the forecourt at speed should not
+   * throw a dialog in a child's face.
+   */
+  #updateDepotProximity(): void {
+    const focus = this.#onFoot && this.#avatar ? this.#avatar : this.#car
+    const inside = this.#depot.contains(focus.x, focus.z)
+    const settled = this.#onFoot || Math.abs(this.#car.speed) < 1.2
+
+    if (inside && settled && !this.#wasInDepot) {
+      this.#wasInDepot = true
+      if (!this.#garage.isOpen) this.openGarage()
+    } else if (!inside) {
+      this.#wasInDepot = false
+    }
+  }
+
+  /**
+   * Frame the camera for whatever is being followed.
+   *
+   * A person is roughly a third of a car's length and half its height, so
+   * both the follow distance and the ride height have to come in — otherwise
+   * walking looks like driving an invisible car with a doll on the bonnet.
+   */
+  #applyCameraFraming(): void {
+    if (this.#onFoot) {
+      this.#chase.setDistance(4.2)
+      this.#chase.setHeights(2.1, 1.0)
+    } else {
+      this.#chase.setDistance(6.2 + this.#car.def.art.length * ART_TO_WORLD * 0.5)
+      this.#chase.setHeights(2.7, 1.15)
+    }
+  }
+
+  #ensureAvatar(): Avatar {
+    if (!this.#avatar) {
+      this.#avatar = new Avatar(this.#world, `${TOWN_SEED}:player`)
+      this.scene.add(this.#avatar.parts.root)
+    }
+    return this.#avatar
+  }
+
+  // -- Depot --------------------------------------------------------------
+
+  /**
+   * Jump back to the depot.
+   *
+   * The one concession an endless city has to make. Without it, driving twenty
+   * blocks in one direction is a one-way trip for a child who cannot yet read
+   * a map, and "I'm lost" is the fastest way to lose a six-year-old's
+   * interest. The map marker points home and this button goes there.
+   */
+  fastTravelToDepot(): void {
+    const depot = this.#depot
+    this.#car.place(depot.arrivalX, depot.arrivalZ, depot.arrivalHeading)
+
+    if (this.#onFoot) {
+      // Bring the walker along, not the empty car.
+      const avatar = this.#ensureAvatar()
+      const side = depot.arrivalHeading + Math.PI / 2
+      avatar.place(
+        depot.arrivalX + Math.cos(side) * 1.6,
+        depot.arrivalZ + Math.sin(side) * 1.6,
+        depot.arrivalHeading,
+      )
+    }
+
+    // Build the world at the destination before the camera looks at it, or
+    // the first frame after the jump is empty ground.
+    this.#world.refresh(this.#car.x, this.#car.z)
+    this.#traffic.reset(this.#car.x, this.#car.z)
+    this.#crowd.reset(this.#car.x, this.#car.z)
+
+    this.#syncCarTransform()
+    const focusX = this.#onFoot ? this.#avatar!.x : this.#car.x
+    const focusZ = this.#onFoot ? this.#avatar!.z : this.#car.z
+    this.#chase.snapTo(focusX, 0.8, focusZ, depot.arrivalHeading)
+    this.#environment.followTarget(focusX, 0, focusZ)
+
+    playDropoff(this.#deps.audio)
+  }
+
+  // -- Company ------------------------------------------------------------
+
+  #openCompany(): void {
+    playClick(this.#deps.audio)
+    this.#refreshCompany()
+    this.#companyBoard.setOpen(true)
+  }
+
+  #refreshCompany(): void {
+    this.#companyBoard.refresh({
+      coins: this.#save.coins,
+      owned: this.#save.ownedVehicles,
+      active: this.#car.def.id,
+      drivers: this.#company.drivers,
+    })
+  }
+
+  /** Hire a driver for a vehicle. Returns true when it went through. */
+  #hireDriver(vehicleId: string): boolean {
+    if (!this.#save.ownedVehicles.includes(vehicleId)) return false
+    if (this.#company.hasDriver(vehicleId)) return false
+
+    const cost = hireCost(getVehicle(vehicleId))
+    if (this.#save.coins < cost) return false
+
+    this.#save.coins -= cost
+    this.#company.hire(vehicleId)
+    this.#save.drivers = this.#company.toJSON()
+    this.#deps.store.save(this.#save)
+
+    this.#hud.setCoins(this.#save.coins, false)
+    this.#refreshCompany()
+    this.#refreshShop()
+    playDropoff(this.#deps.audio)
+    return true
+  }
+
+  /**
+   * A driver finished a trip.
+   *
+   * Paid with the same sound and coin burst as a fare the child drove
+   * themselves, so where the money came from is never a mystery — and the
+   * burst appears over the depot, which is where their driver just got back
+   * to.
+   */
+  #handleDriverEarnings(_driver: Driver, coins: number): void {
+    this.#save.coins += coins
+    this.#save.drivers = this.#company.toJSON()
+    this.#deps.store.save(this.#save)
+    this.#hud.setCoins(this.#save.coins, false)
+
+    playCoin(this.#deps.audio)
+    this.#particles.emit({
+      x: DEPOT_X,
+      y: 3.2,
+      z: DEPOT_Z,
+      count: 6,
+      speedMin: 1.2,
+      speedMax: 3,
+      lifeMin: 0.7,
+      lifeMax: 1.1,
+      sizeMin: 0.12,
+      sizeMax: 0.2,
+      colors: COIN_COLORS,
+    })
   }
 
   // -- Shop -----------------------------------------------------------------
@@ -735,6 +1093,7 @@ export class TownScene3D {
     this.#car.applyUpgrades(computeEffects(this.#save.upgrades))
 
     this.#hud.setCoins(this.#save.coins, false)
+
     this.#refreshShop()
     this.#refreshGarage()
     playDropoff(this.#deps.audio)
@@ -753,12 +1112,30 @@ export class TownScene3D {
     this.#deps.store.flush()
 
     // Everything derived from the save has to be rebuilt, not just redrawn.
+    //
+    // `setVehicle` first, and before the upgrades: importing a save whose
+    // active car was the bus used to leave the player driving whatever they
+    // had before, with the imported save then written straight back out —
+    // silently rewriting the file they had just loaded. It also has to come
+    // before applyUpgrades, because it constructs a NEW Vehicle3D and the
+    // upgrades would otherwise be applied to the car it replaced.
+    this.setVehicle(this.#save.activeVehicle)
     this.#car.applyUpgrades(computeEffects(this.#save.upgrades))
+
+    // Adopt the imported roster wholesale, then drop anyone assigned to a car
+    // the imported save does not own.
+    this.#company.load(this.#save.drivers)
+    this.#company.prune(this.#save.ownedVehicles)
+    this.#save.drivers = this.#company.toJSON()
+
     this.#hud.setCoins(this.#save.coins, true)
     this.#hud.setMuted(this.#save.muted)
     this.#deps.settings.set('muted', this.#save.muted)
     this.#rides.ridesCompleted = this.#save.totalRides
+    this.#depot.setFleet(this.#save.ownedVehicles, this.#save.activeVehicle)
     this.#refreshShop()
+    this.#refreshGarage()
+    this.#refreshCompany()
 
     this.#shop.setStatus(result.migrated ? 'Loaded (from an older version).' : 'Loaded!')
   }
@@ -792,6 +1169,49 @@ export class TownScene3D {
       buyVehicle: (id: string): boolean => this.buyVehicle(id),
       owned: (): unknown => [...this.#save.ownedVehicles],
       openGarage: (): void => this.openGarage(),
+      fastTravel: (): void => this.fastTravelToDepot(),
+      toggleFoot: (): void => this.toggleOnFoot(),
+      onFoot: (): boolean => this.#onFoot,
+      /** Put the car down anywhere, to test that the world follows it. */
+      teleport: (x: number, z: number, heading = 0): void => {
+        this.#car.place(x, z, heading)
+        this.#world.refresh(x, z)
+        this.#traffic.reset(x, z)
+        this.#crowd.reset(x, z)
+        this.#autoPath.length = 0
+      },
+      /** What the streamed world looks like wherever the car currently is. */
+      worldAt: (): unknown => ({
+        spots: this.#world.sidewalkSpots.length,
+        obstacles: this.#world.obstacles.size,
+        roadDistance: this.#world.roads.nearestRoad(this.#car.x, this.#car.z).distance,
+        blockSize: this.#world.roads.blockSize,
+      }),
+      /** Walk forward for a number of seconds, through the real controls. */
+      walk: (seconds: number): void => {
+        const avatar = this.#avatar
+        if (!avatar) return
+        avatar.controls.throttle = 1
+        avatar.controls.brake = 0
+        avatar.controls.steer = 0
+        const dt = 1 / 60
+        for (let i = 0; i < Math.round(seconds / dt); i++) avatar.update(dt)
+        avatar.controls.throttle = 0
+      },
+      /** Run the company clock forward without waiting in real time. */
+      advanceCompany: (seconds: number): void => {
+        this.#company.update(seconds, this.#car.def.id)
+      },
+      cityLife: (): unknown => ({
+        traffic: this.#traffic.activeCount,
+        pedestrians: this.#crowd.activeCount,
+      }),
+      hireDriver: (id: string): boolean => this.#hireDriver(id),
+      drivers: (): unknown => this.#company.drivers.map((d) => ({ ...d })),
+      incomePerMinute: (): number => this.#company.incomePerMinute(this.#car.def.id),
+      depot: (): unknown => ({ x: DEPOT_X, z: DEPOT_Z }),
+      avatar: (): unknown =>
+        this.#avatar ? { x: this.#avatar.x, z: this.#avatar.z } : null,
       /** The post chain, for tuning AO from the console. Dev only. */
       post: (): unknown => this.#post,
       activeVehicle: (): string => this.#car.def.id,
@@ -806,11 +1226,8 @@ export class TownScene3D {
        * the car back on tarmac. Dev builds only.
        */
       unstick: (): void => {
-        const near = this.#city.roads.nearestRoad(
-          this.#car.x / WORLD_SCALE,
-          this.#car.z / WORLD_SCALE,
-        )
-        this.#car.place(near.x * WORLD_SCALE, near.y * WORLD_SCALE, near.tangent)
+        const near = this.#world.roads.nearestRoad(this.#car.x, this.#car.z)
+        this.#car.place(near.x, near.z, near.tangent)
         this.#autoPath.length = 0
         this.#autoStuckTime = 0
       },
@@ -853,18 +1270,16 @@ export class TownScene3D {
    * skeleton the ambient traffic AI will use.
    */
   #routeTo(x: number, z: number): Array<{ x: number; z: number }> {
-    const roads = this.#city.roads
-    const b = roads.blockSize * WORLD_SCALE
-    const maxCol = roads.cols - 1
-    const maxRow = roads.rows - 1
+    const roads = this.#world.roads
+    const b = roads.blockSize
 
-    const snap = (value: number, max: number): number =>
-      clamp(Math.round(value / b), 0, max)
-
-    const startCol = snap(this.#car.x, maxCol)
-    const startRow = snap(this.#car.z, maxRow)
-    const endCol = snap(x, maxCol)
-    const endRow = snap(z, maxRow)
+    // No clamping any more: the grid runs in both directions without limit,
+    // so a junction index is just a rounded coordinate and every integer is a
+    // real place.
+    const startCol = Math.round(this.#car.x / b)
+    const startRow = Math.round(this.#car.z / b)
+    const endCol = Math.round(x / b)
+    const endRow = Math.round(z / b)
 
     const path: Array<{ x: number; z: number }> = []
 
@@ -873,8 +1288,8 @@ export class TownScene3D {
     // straight line from there to a junction cuts diagonally through the
     // middle of a building block — which is exactly how the car ends up
     // wedged between two buildings with the throttle down.
-    const near = roads.nearestRoad(this.#car.x / WORLD_SCALE, this.#car.z / WORLD_SCALE)
-    path.push({ x: near.x * WORLD_SCALE, z: near.y * WORLD_SCALE })
+    const near = roads.nearestRoad(this.#car.x, this.#car.z)
+    path.push({ x: near.x, z: near.z })
 
     // Then onto the grid proper.
     path.push({ x: startCol * b, z: startRow * b })
