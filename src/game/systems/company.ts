@@ -56,18 +56,38 @@ const NAMES = [
   'Ivo', 'Jo', 'Kit', 'Lulu', 'Milo', 'Nina', 'Otto', 'Pip',
 ]
 
+/**
+ * Roughly what a child earns per minute driving well themselves.
+ *
+ * A ride pays `10 + round(distance/16) * 5` times the vehicle's fare
+ * multiplier, and a pickup-and-drop cycle takes something like half a minute
+ * of confident driving. This is the yardstick every driver is balanced
+ * against, and a unit test holds them below it.
+ */
+export const ACTIVE_DRIVING_PER_MINUTE = 44
+
 /** Base cost to hire, scaled by how capable the vehicle is. */
 export function hireCost(def: VehicleDef): number {
-  // Roughly a third of the vehicle's own price, floored so the first hire is
-  // always reachable soon after buying a second car.
-  return Math.max(40, Math.round((def.price * 0.35) / 5) * 5)
+  // Deliberately cheap relative to the vehicle: a hire should pay for itself
+  // in a few minutes of play, not a session. A price a six-year-old saves for
+  // and then waits twenty minutes to recoup teaches the wrong lesson about
+  // what the button did.
+  return Math.max(25, Math.round((def.price * 0.12) / 5) * 5)
 }
 
 export function driverEconomics(def: VehicleDef): DriverEconomics {
   // Seats drive both halves of the trade: more seats means a longer round
   // trip but a bigger payout at the end of it.
-  const tripSeconds = 26 + def.seats * 3.5
-  const fare = Math.round(def.seats * 5 * def.fareMultiplier)
+  //
+  // The absolute level is set so that NO single driver out-earns the child
+  // driving that same vehicle themselves — see ACTIVE_DRIVING_PER_MINUTE. An
+  // earlier pass had a bus driver on 138/min against roughly 44/min for
+  // active play, which made putting the tablet down the optimal strategy and
+  // made the child's own driving feel pointless. Staffing the entire fleet
+  // adds up to more than driving does, but that is the reward for having
+  // bought every vehicle in the game.
+  const tripSeconds = 50 + def.seats * 5
+  const fare = Math.round(def.seats * 1.6 * def.fareMultiplier)
   return { tripSeconds, fare, perMinute: Math.round((fare / tripSeconds) * 60) }
 }
 
